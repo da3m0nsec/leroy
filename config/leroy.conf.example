@@ -1,0 +1,14 @@
+# Copy to ${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config and set mode 0600.
+# This file is sourced as Bash; only use a file you own and trust.
+
+MORPHEUS_URL="https://morpheus.example.com"
+
+# Prefer exporting this value from a secret manager instead of storing it here.
+# MORPHEUS_API_TOKEN="replace-with-a-morpheus-access-token"
+
+MORPHEUS_VERIFY_TLS="true"
+MORPHEUS_CONNECT_TIMEOUT="10"
+MORPHEUS_REQUEST_TIMEOUT="60"
+LEROY_OUTPUT="table"
+LEROY_LOG_LEVEL="info"
+# LEROY_STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/leroy"

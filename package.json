@@ -1,0 +1,19 @@
+{
+  "name": "leroy-morpheus-tui",
+  "version": "0.2.0",
+  "description": "A Bash TUI and CLI for configuring and managing HPE Morpheus Enterprise environments.",
+  "private": true,
+  "license": "MIT",
+  "author": "Leroy contributors",
+  "repository": "https://github.com/da3m0nsec/leroy",
+  "maintainers": [
+    { "name": "Leroy maintainers" }
+  ],
+  "bin": { "leroy": "leroy.sh" },
+  "scripts": {
+    "check": "make check",
+    "test": "make test",
+    "format": "make format"
+  },
+  "engines": { "bash": ">=4.4" }
+}

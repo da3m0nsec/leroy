@@ -1,0 +1,32 @@
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+config/leroy.conf
+*.pem
+*.key
+*.p12
+*.token
+
+# Logs and runtime output
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# Test and coverage artifacts
+.bats-run/
+coverage/
+test-results/
+
+# Tool and editor metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+node_modules/
+npm-debug.log*
