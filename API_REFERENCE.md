@@ -67,10 +67,12 @@ See the official [List All Environments](https://apidocs.morpheusdata.com/refere
 | --- | --- | --- | --- |
 | CRUD | `/api/accounts` | Manage the Leroy demonstration subtenant. | Implemented |
 | CRUD | `/api/roles` | Create tenant and persona roles. | Implemented |
+| `PUT` | `/api/roles/{id}/update-permission` | Apply feature access using levels exposed by the administrative base role. | Implemented |
 | CRUD | `/api/accounts/{id}/users` | Create the three subtenant personas. | Implemented |
 | CRUD | `/api/groups` | Manage cloud-agnostic demo groups. | Implemented |
 | CRUD | `/api/policies` | Demonstrate governance policies. | Implemented |
-| GET/DELETE | `/api/cypher/password/24/...` | Generate and remove demo credentials. | Implemented |
+| `GET` | `/api/cypher?list=true&key=...` | Discover an exact key without generating a password. | Implemented |
+| GET/DELETE | `/api/cypher/password/24/...` | Generate, read, and remove demo credentials. | Implemented |
 | CRUD | `/api/library/option-types` | Manage the workflow input. | Implemented |
 | CRUD | `/api/tasks` | Manage the local Groovy task. | Implemented |
 | CRUD | `/api/task-sets` | Manage and execute the operational workflow. | Implemented |

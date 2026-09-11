@@ -91,3 +91,134 @@ load test_helper
   [ "${lines[0]}" = "Morpheu..." ]
   [ "${lines[1]}" = "ok" ]
 }
+
+
+@test "TLS verification defaults to false" {
+  run env -u MORPHEUS_VERIFY_TLS bash -c 'source "$1"; printf "%s\n" "$MORPHEUS_VERIFY_TLS"' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+}
+
+@test "runtime configuration prompt captures missing URL and token" {
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN bash -c '
+    source "$1"
+    MORPHEUS_URL=""
+    MORPHEUS_API_TOKEN=""
+    prompt_runtime_config <<< $'"'"'https://morpheus.example.test/\ntest-session-token\n'"'"'
+    printf "%s|%s|%s\n" "$MORPHEUS_URL" "$MORPHEUS_API_TOKEN" "$MASTER_TOKEN"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"https://morpheus.example.test|test-session-token|test-session-token"* ]]
+}
+
+@test "Cypher lookup uses exact key filtering" {
+  run bash -c '
+    source "$1"
+    api_request() {
+      [[ "$2" == "/api/cypher?list=true&key=password%2F24%2Fleroy-demo%2Fleroy-admin" ]] || return 99
+      printf "%s\n" '"'"'{"cyphers":[{"key":"password/24/leroy-demo/leroy-admin"}]}'"'"'
+    }
+    cypher_find "password/24/leroy-demo/leroy-admin"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  jq -e '.key == "password/24/leroy-demo/leroy-admin"' <<<"$output"
+}
+
+@test "plan adopts an existing Cypher key in the demo namespace" {
+  run bash -c '
+    source "$1"
+    CURRENT_DEMO_ID=leroy-demo
+    state_resource() { return 0; }
+    find_remote() { printf "%s\n" '"'"'{"key":"password/24/leroy-demo/leroy-admin"}'"'"'; }
+    desired_action '"'"'{"key":"cypher:admin","type":"cypher","scope":"master","name":"leroy-admin","spec":{"path":"password/24/leroy-demo/leroy-admin"}}'"'"'
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ "$output" = "adopt" ]
+}
+
+@test "role permissions reuse access types accepted by Morpheus" {
+  local captured="$BATS_TEST_TMPDIR/role-payloads.jsonl"
+  run bash -c '
+    source "$1"; BASE_USER_ROLE_ID=1; MASTER_TOKEN=test; captured="$2"
+    api_request() {
+      if [[ "$1" == GET ]]; then
+        printf "%s\n" '"'"'{"permissions":[{"code":"provisioning-instances","name":"Provisioning: Instances","access":"full"},{"code":"infrastructure-groups","name":"Infrastructure: Groups","access":"yes"}]}'"'"'
+      else printf "%s\n" "$3" >>"$captured"; printf "%s\n" '"'"'{"success":true}'"'"'; fi
+    }
+    configure_role_permissions platform-operator 42
+  ' _ "$LEROY_BIN" "$captured"
+  [ "$status" -eq 0 ]
+  jq -se 'length == 2 and any(.[]; .permissionCode == "provisioning-instances" and .access == "full") and any(.[]; .permissionCode == "infrastructure-groups" and .access == "yes")' "$captured"
+}
+
+
+@test "preset enables every deployment component" {
+  run bash "$LEROY_BIN" demo preset
+  [ "$status" -eq 0 ]
+  jq -e '.features == {multitenancy:true,roles:true,environments:true,groups:true,policies:true,automation:true,catalog:true}' <<<"$output"
+}
+
+@test "master-only selection excludes multitenancy and persona resources" {
+  run bash -c '
+    source "$1"
+    TUI_FEATURES_JSON='"'"'{"multitenancy":false,"roles":false,"environments":true,"groups":true,"policies":true,"automation":true,"catalog":true}'"'"'
+    manifest_to_temp
+    resource_stream
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  jq -se '
+    length == 13 and
+    all(.[]; .scope == "master") and
+    all(.[]; (.type == "tenant" or .type == "role" or .type == "user" or .type == "cypher") | not)
+  ' <<<"$output"
+}
+
+@test "manifest validation rejects invalid component dependencies" {
+  local bad_manifest="$BATS_TEST_TMPDIR/dependencies.json"
+  bash "$LEROY_BIN" demo preset | jq '.features.multitenancy=false' >"$bad_manifest"
+  run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$bad_manifest"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"manifest is invalid"* ]]
+}
+
+@test "component toggles enforce dependent selections" {
+  run bash -c '
+    source "$1"
+    TUI_FEATURES_JSON="$(feature_defaults)"; TUI_COMPONENT_NOTICE=""
+    tui_toggle_component multitenancy
+    jq -e ".multitenancy == false and .roles == false" <<<"$TUI_FEATURES_JSON"
+    TUI_FEATURES_JSON="$(feature_defaults)"
+    tui_toggle_component groups
+    jq -e ".groups == false and .policies == false" <<<"$TUI_FEATURES_JSON"
+    TUI_FEATURES_JSON="$(feature_defaults)"
+    tui_toggle_component automation
+    jq -e ".automation == false and .catalog == false" <<<"$TUI_FEATURES_JSON"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+}
+
+@test "changing component selection on existing state requires recreate" {
+  run bash -c '
+    source "$1"
+    LEROY_STATE_DIR="$2/state"; MORPHEUS_URL=https://morpheus.example.test; APPLIANCE_BUILD=9.0.0
+    manifest_to_temp; state_init
+    TUI_FEATURES_JSON='"'"'{"multitenancy":false,"roles":false,"environments":true,"groups":true,"policies":true,"automation":true,"catalog":true}'"'"'
+    manifest_to_temp
+    state_assert_features
+  ' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 8 ]
+  [[ "$output" == *"use recreate"* ]]
+}
+
+@test "master-scoped policy payload omits a tenant account" {
+  local state="$BATS_TEST_TMPDIR/state.json"
+  printf '%s\n' '{"resources":[]}' >"$state"
+  run bash -c '
+    source "$1"; STATE_FILE="$2"; CURRENT_MARKER="Managed by Leroy demo:leroy-demo"
+    resource_id() { return 0; }
+    resolve_policy_type() { printf "%s\n" '"'"'{"id":7,"code":"motd","name":"Message of the Day"}'"'"'; }
+    build_payload '"'"'{"type":"policy","spec":{"name":"Leroy Demo Message","code":"leroy-demo-message","type":"motd","scope":"tenant","config":{"message":"Hello"}}}'"'"'
+  ' _ "$LEROY_BIN" "$state"
+  [ "$status" -eq 0 ]
+  jq -e '.policy.account == null and .policy.policyType.id == 7' <<<"$output"
+}

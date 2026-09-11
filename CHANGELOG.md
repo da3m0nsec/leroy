@@ -10,12 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Full-screen, dependency-free TUI dashboard with arrow-key navigation, direct shortcuts, action result views, lifecycle state, and connection status.
 - Protected in-TUI destruction and recreation confirmations.
+- Checkbox-based TUI selector for multitenancy, roles and users, environments, groups, policies, automation, and service catalog.
 
 ### Changed
 
+- Missing URL and token values are requested interactively instead of immediately failing.
+- TLS certificate verification now defaults to disabled.
+- Role feature access uses the valid access type advertised by the Morpheus base role.
 - Interactive operations now return to the dashboard after both successful and failed actions.
+- Plans, applies, deep verification, and custom manifests now honor the selected deployment components.
+- Deployments without multitenancy place selected content in the Master Tenant.
 
 ### Fixed
+
+- Exact Cypher key discovery no longer produces false conflicts from partial search matches.
+- Existing Leroy-owned generated-password keys are adopted during resumable plans and applies.
 
 ### Security
 

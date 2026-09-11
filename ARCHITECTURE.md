@@ -4,13 +4,13 @@
 
 Leroy is a Bash application that presents one Morpheus management capability through two adapters: an interactive terminal interface and a script-friendly command-line interface. Both adapters invoke the same command functions, validation rules, configuration loader, and HTTP client so their behavior does not drift.
 
-The demo lifecycle builds a dependency-ordered set of Morpheus 9 resources. Plan is read-only, apply records each successful mutation atomically, and destroy verifies local state plus remote ownership before deleting in reverse dependency order.
+The demo lifecycle builds a dependency-ordered, operator-selected set of Morpheus 9 resources. Plan is read-only, apply records each successful mutation atomically, and destroy verifies local state plus remote ownership before deleting in reverse dependency order.
 
 ## Design principles
 
 1. **One behavior, two interfaces.** TUI actions call command functions rather than duplicating API requests.
 2. **Safe automation.** CLI output, exit codes, non-interactive behavior, and confirmation rules must be deterministic.
-3. **Secure defaults.** TLS verification is enabled, credentials are not passed in arguments, and authorization data is never logged.
+3. **Explicit security posture.** Credentials are not passed in arguments or logs. TLS verification is disabled for internal demo appliances by default, emits a warning, and can be enabled explicitly.
 4. **Replaceable presentation.** TUI rendering is isolated from transport and business logic so a richer terminal framework can be adopted later.
 5. **Single-file delivery.** All runtime code lives in `leroy.sh`; clearly separated functions keep responsibilities understandable.
 6. **Testable transport.** API calls are centralized so `curl` can be mocked and response handling can be exercised without a live appliance.
@@ -61,7 +61,7 @@ Configuration values are resolved in this order, from lowest to highest priority
 
 The bootstrap implementation sources configuration as shell assignments. A configuration file must therefore be owned and controlled by the operator and must never be sourced from an untrusted location. A future release may replace this format with a non-executable parser.
 
-Access tokens are read from `MORPHEUS_API_TOKEN`. They are deliberately excluded from positional arguments, URLs, debug messages, and process titles. TLS certificate validation is on unless `MORPHEUS_VERIFY_TLS=false` is explicitly configured.
+Access tokens are read from `MORPHEUS_API_TOKEN`. They are deliberately excluded from positional arguments, URLs, debug messages, and process titles. TLS certificate validation defaults to off for demonstration appliances with internal certificates. Set `MORPHEUS_VERIFY_TLS=true` whenever the appliance certificate is trusted.
 
 ## API interaction
 
@@ -75,7 +75,7 @@ Morpheus versions may differ in endpoint availability and payload shape. Version
 
 Running `leroy` or `leroy tui` starts a dependency-free, full-screen terminal adapter. It uses ANSI terminal capabilities and Bash character input instead of `dialog`, `whiptail`, or an ncurses binding, preserving the single-file distribution and the Bash, `curl`, and `jq` runtime baseline.
 
-The dashboard groups actions by operator intent: inspect, build, validate, lifecycle, and configure. It supports arrow keys, `j`/`k`, direct shortcuts, and `Enter`; the alternate screen and cursor are always restored through the process cleanup trap. Rendering is width-aware, respects `NO_COLOR`, and keeps action output on a dedicated result view until the operator dismisses it.
+The dashboard groups actions by operator intent: inspect, build, validate, lifecycle, and configure. Its component selector models seven feature bundles as checkboxes, defaults all of them on, and enforces dependency rules while toggling. It supports arrow keys, `j`/`k`, direct shortcuts, and `Enter`; the alternate screen and cursor are always restored through the process cleanup trap. Rendering is width-aware, respects `NO_COLOR`, and keeps action output on a dedicated result view until the operator dismisses it.
 
 The TUI owns navigation, selection, human-readable tables, prompts, status summaries, and confirmation. It delegates all actual work to command functions. Mutating workflows follow a consistent sequence:
 
@@ -84,6 +84,16 @@ Select resource -> edit values -> validate -> show diff/preview -> confirm -> su
 ```
 
 The TUI detects a non-interactive terminal and fails clearly rather than waiting for unavailable input.
+
+## Component selection and scope
+
+The manifest stores normalized feature flags for `multitenancy`, `roles`, `environments`, `groups`, `policies`, `automation`, and `catalog`. Missing flags default to `true` for compatibility with earlier manifests. Validation enforces these relationships:
+
+- multitenancy and persona roles/users are selected together;
+- policies require groups; and
+- service catalog requires automation.
+
+The feature filter runs before planning, so unselected resources never enter the desired-resource stream. When multitenancy is selected, tenant content uses a temporary tenant-admin token. When it is not selected, environments, groups, policies, automation, and catalog content use the Master Tenant token and payloads omit tenant-account references. The selected feature set is stored in lifecycle state; a later mismatch fails with exit code 8 and requires an explicit recreate.
 
 ## CLI mode
 

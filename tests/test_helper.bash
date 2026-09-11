@@ -5,4 +5,4 @@ LEROY_BIN="$PROJECT_ROOT/leroy.sh"
 
 export MORPHEUS_URL="https://morpheus.test"
 export MORPHEUS_API_TOKEN="test-token-not-a-secret"
-export MORPHEUS_VERIFY_TLS="true"
+export MORPHEUS_VERIFY_TLS="false"
