@@ -1,5 +1,7 @@
 # Constructor de demos Leroy
 
+Publicado en **https://da3m0nsec.github.io/leroy/**
+
 Constructor gráfico de manifiestos para demostraciones de HPE Morpheus. Produce
 un manifiesto JSON de esquema 2 que Leroy aplica sin conversión:
 
