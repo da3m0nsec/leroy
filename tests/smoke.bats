@@ -373,3 +373,28 @@ load test_helper
   [ "$status" -eq 2 ]
   [[ "$output" == *"requires an interactive terminal"* ]]
 }
+
+@test "TUI actions keep the session state they update" {
+  run bash -c '
+    source "$1"
+    tput() { case "$1" in cols) printf "80\n" ;; lines) printf "40\n" ;; esac; }
+    NO_COLOR=1 tui_init_palette
+    tui_sync_manifest() { :; }
+    tui_wait() { :; }
+    probe() { TUI_CONNECTION_STATE="Connected as tester"; printf "probe output\n"; }
+    tui_run_action "Probe" probe >/dev/null 2>&1
+    printf "%s\n" "$TUI_CONNECTION_STATE"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ "$output" = "Connected as tester" ]
+}
+
+@test "escape sequences do not leak their tail into the next key" {
+  run bash -c '
+    source "$1"
+    printf "\033[15~x" | { tui_read_key; tui_read_key; }
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "unknown" ]
+  [ "${lines[1]}" = "x" ]
+}

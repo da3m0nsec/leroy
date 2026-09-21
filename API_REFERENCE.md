@@ -43,7 +43,7 @@ In Morpheus, this endpoint represents environment labels used when provisioning 
 
 | Method | Path | Purpose | Status |
 | --- | --- | --- | --- |
-| `GET` | `/api/environments` | List configured environments. | Bootstrap |
+| `GET` | `/api/environments` | List configured environments, paginated. | Bootstrap |
 | `GET` | `/api/environments/{id}` | Retrieve one environment. | Bootstrap |
 | `POST` | `/api/environments` | Create a private demo environment. | Implemented |
 | `PUT` | `/api/environments/{id}` | Reconcile a managed environment. | Implemented |
@@ -107,7 +107,7 @@ Options endpoints can be context-sensitive and version-dependent. Each use must 
 
 ## Request behavior
 
-All requests use configurable connect and total timeouts. Collection commands must handle Morpheus pagination rather than assuming one response contains every record. Query parameters must be URL-encoded, and identifiers must be validated before URL construction.
+All requests use configurable connect and total timeouts. Collection commands handle Morpheus pagination through `api_collection`, which requests `max=100` with an increasing `offset` until a short page, stops at `meta.total` when the appliance reports it, and bounds itself at 10000 records. The collection key of each endpoint is detected from the first page, so an endpoint that wraps its array under an unexpected name still returns records; confirm the real key names on an appliance (see `AV-011`). Query parameters must be URL-encoded, and identifiers must be validated before URL construction.
 
 For JSON writes, Leroy will generate a preview and validate required fields locally before submission. It will not automatically retry non-idempotent requests.
 
@@ -123,6 +123,10 @@ For JSON writes, Leroy will generate a preview and validate required fields loca
 | `5xx` | Report an appliance failure; retry only under an explicit policy. |
 | Transport/TLS failure | Return a network error while preserving TLS verification defaults. |
 | Invalid JSON | Treat as an unsupported or invalid API response. |
+
+## Appliance validation
+
+Endpoint status in this file records intent and implementation, not proof. An endpoint marked Implemented has been built and unit-tested against fixtures; whether Morpheus accepts the request is tracked separately in [`docs/APPLIANCE_VALIDATION.md`](docs/APPLIANCE_VALIDATION.md).
 
 ## Version validation checklist
 

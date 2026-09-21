@@ -1424,32 +1424,49 @@ tui_pager() {
   done
 }
 
+# Runs an action with live output and a copy on disk for scrolling. The copy is
+# made through a FIFO rather than a pipeline, because a pipeline would run the
+# action in a subshell and discard the session state it updates.
 tui_run_action() {
-  local title="$1" rc=0 output visible
+  local title="$1" rc=0 output="" fifo="" tee_pid visible
   shift
-  output="$(mktemp "${TMPDIR:-/tmp}/leroy-output.XXXXXX")" || return 0
   tui_action_header "$title"
   printf '%sRunning...%s\n\n' "$TUI_DIM" "$TUI_RESET"
-  if "$@" 2>&1 | tee "$output"; then rc=0; else rc=$?; fi
+  if output="$(mktemp "${TMPDIR:-/tmp}/leroy-output.XXXXXX")" && command -v mkfifo >/dev/null 2>&1; then
+    fifo="${output}.fifo"
+    mkfifo -m 600 "$fifo" 2>/dev/null || fifo=""
+  else
+    output=""
+  fi
+  if [[ -n "$fifo" ]]; then
+    tee "$output" <"$fifo" &
+    tee_pid=$!
+    "$@" >"$fifo" 2>&1 || rc=$?
+    wait "$tee_pid" 2>/dev/null || true
+    rm -f "$fifo"
+  else
+    [[ -z "$output" ]] || { rm -f "$output"; output=""; }
+    "$@" || rc=$?
+  fi
   if ((rc == 0)); then
     TUI_LAST_RESULT="Success: $title"
-    printf '\nCompleted successfully.\n' >>"$output"
+    [[ -z "$output" ]] || printf '\nCompleted successfully.\n' >>"$output"
     printf '\n%sCompleted successfully.%s\n' "$TUI_SUCCESS" "$TUI_RESET"
   else
     TUI_LAST_RESULT="Failed ($rc): $title"
-    printf '\nAction failed with exit code %s.\n' "$rc" >>"$output"
+    [[ -z "$output" ]] || printf '\nAction failed with exit code %s.\n' "$rc" >>"$output"
     printf '\n%sAction failed with exit code %s.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
   fi
   visible=$(($(tui_lines) - 7))
   ((visible >= 1)) || visible=1
-  if (($(wc -l <"$output") > visible)); then
+  if [[ -n "$output" ]] && (($(wc -l <"$output") > visible)); then
     printf '\n%sOutput is longer than this screen. Press any key to scroll it.%s' "$TUI_DIM" "$TUI_RESET"
     IFS= read -rsn1 _ || true
     tui_pager "$output" "$title"
   else
     tui_wait
   fi
-  rm -f "$output"
+  [[ -z "$output" ]] || rm -f "$output"
   tui_sync_manifest >/dev/null 2>&1 || true
   return 0
 }
