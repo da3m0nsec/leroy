@@ -1,273 +1,158 @@
 # Leroy
 
-Leroy is a Bash-based terminal application for exploring, configuring, and managing HPE Morpheus Enterprise environments. It provides two interfaces over the same command and API layers:
+Build a complete HPE Morpheus 9 demonstration from an empty appliance — tenant,
+personas, environments, groups, policies, automation and a self-service catalog
+— then take it down again cleanly. No cloud integration required.
 
-- an interactive TUI for operators who want guided navigation and confirmation prompts; and
-- a non-interactive CLI for shell scripts, CI jobs, and infrastructure automation.
+### [→ Open the manifest builder](https://da3m0nsec.github.io/leroy/)
 
-The project is in its `0.2.0` phase. The complete application lives in the single `leroy.sh` script, which contains configuration loading, authenticated HTTP transport, CLI commands, and the interactive TUI.
-
-## Capabilities
-
-- Build a complete Morpheus 9 demonstration tenant from an empty appliance, or select only the platform capabilities relevant to the customer.
-- Demonstrate RBAC, environments, groups, policies, Cypher, automation, and self-service catalog capabilities without requiring a cloud.
-- Expose equivalent CLI commands with stable output and exit codes.
-- Support JSON output for composition with tools such as `jq`.
-- Protect credentials by accepting access tokens through environment variables or user-only configuration files.
-- Add confirmation gates and dry-run support before mutating Morpheus resources.
-
-## Requirements
-
-- Bash 4.4 or newer
-- `curl`
-- `jq`
-- Optional for development: `shellcheck`, `shfmt`, and `bats-core`
-
-## Installation
-
-Clone the repository and run the setup script:
-
-```bash
-git clone <repository-url> leroy
-cd leroy
-bash ./scripts/setup.sh
-```
-
-For a user-local installation:
-
-```bash
-make install PREFIX="$HOME/.local"
-```
-
-This installs the single executable as `$HOME/.local/bin/leroy`. Ensure `$HOME/.local/bin` is on your `PATH`.
-
-To run directly from a checkout, no installation is required:
-
-```bash
-bash ./leroy.sh --help
-```
-
-## Configuration
-
-Copy the environment template and set the URL of your Morpheus appliance and an API access token:
-
-```bash
-cp .env.example .env
-chmod 600 .env
-${EDITOR:-vi} .env
-```
-
-If the URL or token is missing when Leroy starts in an interactive terminal, it asks for the missing values before opening the TUI or running the requested command. The token input is hidden and the answers apply only to the current process.
-
-Then export the values before starting Leroy:
-
-```bash
-set -a
-source .env
-set +a
-```
-
-Do not commit `.env`, access tokens, passwords, or exported API responses containing sensitive data. For installed use, Leroy can also read `${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config`; see [`config/leroy.conf.example`](config/leroy.conf.example).
-
-## TUI usage
-
-Start the interactive interface by running Leroy without a subcommand:
-
-```bash
-leroy
-```
-
-Or request it explicitly:
-
-```bash
-leroy tui
-```
-
-It runs in the terminal's alternate screen and needs no UI framework. Navigate with the arrow keys or `j`/`k`, press `Enter` to run the selected action, or use the displayed shortcut key. Press `q` or `Esc` to return to the shell. Keys the dashboard does not use, including function and navigation keys, are ignored rather than treated as `Esc`.
-
-| Key | Action |
-| --- | --- |
-| `s` | Check connection and show identity, build, and tenant |
-| `i` | Deployment inventory: recorded resources and their Morpheus IDs |
-| `p` | Preview the plan for the current manifest and selection |
-| `a` | Build or resume the selected demo |
-| `v` | Verify structure and ownership |
-| `d` | Deep verification of personas and the workflow |
-| `r` | Recreate: destroy, then build the current selection |
-| `x` | Destroy the demo the dashboard is showing |
-| `c` | Select deployment components |
-| `m` | Choose the manifest source: preset, a saved deployment, or a file |
-| `w` | Create a custom manifest with the wizard |
-| `q` | Quit |
-
-The dashboard reports the appliance, the connection and authenticated identity, the active manifest with its demo ID, the component selection, the state of that demo, and the result of the latest action. Every row describes the demo the actions will operate on, so switching the manifest source switches all of them together. Leroy checks the connection once when the TUI opens; an unreachable appliance is reported on the dashboard instead of blocking startup.
-
-Choose **Select deployment components** (`c`) to open a checkbox screen. All seven bundles are enabled initially: multitenancy, persona roles and users, environments, groups, policies, automation, and service catalog. Use the arrow keys or `j`/`k`, press `Space` to toggle, `a` to select all, `n` to clear all, `Enter` to save, or `Esc` to cancel. Dependencies are kept valid automatically: multitenancy and persona roles move together, policies require groups, and catalog requires automation. With multitenancy disabled, selected platform content is created in the Master Tenant instead. An asterisk marks a component that differs from the saved deployment, and the dashboard says when the selection needs a recreate.
-
-Choose **Choose manifest source** (`m`) to pick what the TUI operates on: the built-in preset, one of the deployments recorded in the state directory, or a manifest file you name. Every state file embeds the manifest it was built from, so a saved deployment can be selected without still having its manifest; a deployment recorded against a different appliance is labelled as such. A manifest saved by the wizard (`w`) becomes the active source automatically. An unreadable or invalid manifest is refused and the previous source is kept.
-
-**Build selected demo** (`a`) previews first: it runs the plan, lets you scroll it when it is longer than the screen, then reports how many resources it would create, update, and adopt, and asks for confirmation before anything is sent to Morpheus. A plan that reports conflicts fails the preview, so a build never starts over one.
-
-If destruction or recreation stops because a resource no longer matches the ownership marker Leroy recorded, the TUI offers to retry with force and requires you to type `force`. Forcing still refuses any resource that carries no Leroy identity at all. Failures for other reasons, such as state belonging to a different appliance, are not offered a retry, because forcing would not help.
-
-Inventory, verification, destruction, and recreation are only offered when a saved deployment exists for the active demo ID, and destruction and recreation require the exact organization name recorded in that state. Action output is shown while it runs; anything longer than the screen can be scrolled afterwards with `j`/`k`, `Space`, and `q`, because the alternate screen keeps no scrollback. Failures return to the dashboard instead of terminating the session. The dashboard fits an 80x24 terminal and drops its group headings when the terminal is shorter. Set `NO_COLOR=1` if the terminal should not emit color styling.
-
-## Constructor gráfico de manifiestos
-
-`web/` contiene un constructor gráfico que genera manifiestos sin escribir JSON
-a mano. Se despliega en GitHub Pages y se ejecuta en local con `make web`.
-
-Su portada explica la herramienta, describe los siete bloques que despliega y
-ofrece la orden de instalación de la CLI lista para copiar:
+Design the demonstration in the browser, download the manifest, apply it with
+one command. The whole tool is a single Bash script.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh -o leroy && chmod +x leroy
+export MORPHEUS_URL="https://morpheus.example.com"
+export MORPHEUS_API_TOKEN="a-master-tenant-admin-token"
+./leroy demo apply --file my-demo.json
 ```
 
-El lienzo dibuja la demostración como cajas conectadas por las dependencias que
-Leroy aplica realmente. Cada caja se arrastra y se activa o desactiva, lo que
-enciende o apaga el bloque correspondiente del manifiesto. Trae escenarios de
-partida (plataforma, banca, retail, telco y sector público), edita personas con
-sus permisos y comprobaciones de acceso, valida contra las mismas reglas que
-`leroy.sh`, y exporta un manifiesto de esquema 2:
+Needs Bash 4.4+, `curl`, `jq`, and a Master Tenant administrator token on
+Morpheus 9. Tokens are read from the environment, never from arguments.
 
-```bash
-leroy demo plan --file mi-demo.json
-```
+## Three ways in, one behavior
 
-Consulta [`web/README.md`](web/README.md) para el detalle.
+| | How | For |
+| --- | --- | --- |
+| **Builder** | [the page above](https://da3m0nsec.github.io/leroy/), or `make web` locally | Designing a demo without writing JSON |
+| **TUI** | `./leroy` | Guided operation with confirmations |
+| **CLI** | `./leroy demo …` | Scripts, CI and automation |
+
+The TUI and CLI call the same functions, so they cannot drift apart.
 
 ## Demo lifecycle
 
-Print the built-in, secret-free manifest:
-
 ```bash
-leroy demo preset > leroy-demo.json
+./leroy demo preset > my-demo.json        # built-in manifest to start from
+./leroy demo plan    --file my-demo.json  # preview; changes nothing
+./leroy demo apply   --file my-demo.json  # build; resumable if interrupted
+./leroy demo verify  --file my-demo.json --deep
+./leroy demo destroy --demo-id my-demo --yes
 ```
 
-Preview or apply the default demo:
+`verify` checks that every recorded resource still exists and is Leroy's.
+`--deep` also logs in as each persona to confirm what it may and may not do,
+runs the workflow, and revokes its temporary tokens. It reports one row per
+check and exits `9` if any fails.
 
-```bash
-leroy demo plan
-leroy demo apply
-```
+Also available: `demo list` and `demo state` (read local state, no credentials
+needed), `demo wizard`, `demo recreate`, and `demo preset --schema 2`.
 
-Use a custom manifest produced by the TUI wizard or edited from the preset. The wizard prints a summary of what it generated and writes the complete manifest to the file:
+Destructive commands need explicit confirmation and only touch resources whose
+recorded ID **and** remote ownership marker both match.
 
-```bash
-leroy demo wizard
-leroy demo plan --file custom-demo.json
-leroy demo apply --file custom-demo.json
-```
+Read-only commands: `./leroy status` checks authentication and connectivity,
+`./leroy environments list` and `environments get ID` read environment labels.
+Add `--output json` to any of them to pipe into `jq`.
 
-Verify resource ownership and configuration. Deep verification logs in temporarily as all three personas, checks positive and negative permissions, executes the autonomous workflow, and revokes its temporary OAuth tokens:
+## What it builds
 
-```bash
-leroy demo verify --file custom-demo.json
-leroy demo verify --file custom-demo.json --deep
-```
+Seven blocks you switch on and off independently:
 
-Verification reports one row per check so a failing run names what failed:
+| Block | Creates |
+| --- | --- |
+| Multitenancy | The demo organization and its account role |
+| Roles and users | One role, Cypher password and user per persona |
+| Environments | Environment labels for provisioning |
+| Groups | Infrastructure groups to govern |
+| Policies | MOTD, instance naming, expiration, Cypher access |
+| Automation | An input, a local Groovy task and an operational workflow |
+| Catalog | A self-service item backed by that workflow |
 
-```text
-RESULT  CHECK      TARGET
-pass    manifest   leroy-demo
-pass    resource   environment:Leroy Development
-fail    resource   group:Leroy Production (resource is missing on the appliance)
-3 checks, 1 failed
-```
+Dependencies hold themselves: policies need groups, the catalog needs
+automation, and persona roles travel with the tenant. Without multitenancy,
+the selected content is created in the Master Tenant instead.
 
-Use `--output json` for `{verified, checked, failed, checks[]}` instead.
+## Manifests
 
-Inspect what Leroy recorded locally. Both commands read state only and need no appliance credentials:
+A manifest is a secret-free JSON document describing the demonstration.
 
-```bash
-leroy demo list
-leroy demo state --demo-id leroy-demo
-leroy --output json demo state --file custom-demo.json
-```
+- **Schema 1** fixes three personas with known keys, and keeps their permission
+  rules inside `leroy.sh`.
+- **Schema 2** lets the manifest define any number of personas, each with its
+  own permission rules, the access it must and must not have, whether it gets
+  catalog access, and which one runs the workflow. The builder produces this.
 
-Destructive commands require explicit confirmation and only act on IDs in local state whose remote ownership marker also matches:
+Leroy reads both. `demo preset --schema 2` emits the built-in demo in the newer
+form.
 
-```bash
-leroy demo destroy --demo-id leroy-demo --yes
-leroy demo recreate --file custom-demo.json --yes
-```
+## TUI
 
-Manifests come in two schema versions. Version 1 fixes the persona set at three,
-with known keys and profiles, and keeps their Morpheus permission rules inside
-`leroy.sh`. Version 2 moves that into the manifest: any number of personas, each
-with its own permission rules, the access it must and must not have, whether it
-receives catalog access, and whether it runs the demonstration workflow. Leroy
-reads both, and `demo preset --schema 2` emits the built-in demo in the newer
-form. The graphical builder produces version 2.
+Run `./leroy` with no arguments. The dashboard reports the appliance, the
+authenticated identity, the active manifest and its demo, the component
+selection, and the state of that deployment.
 
-State is stored with user-only permissions under `${XDG_STATE_HOME:-$HOME/.local/state}/leroy`. An interrupted apply retains its completed resource IDs and can be resumed by running the same command again. If a saved deployment exists, changing its component selection requires **Recreate** so Leroy cannot silently leave deselected resources behind.
+| Key | Action |
+| --- | --- |
+| `s` `i` | Connection status · deployment inventory |
+| `p` `a` | Preview plan · build (previews and confirms first) |
+| `v` `d` | Verify structure · deep verification |
+| `r` `x` | Recreate · destroy (both confirm with the organization name) |
+| `c` `m` `w` | Components · manifest source · manifest wizard |
+| `q` | Quit |
 
-CLI users can make the same selection by editing the top-level `features` booleans in a generated manifest. Omitting `features` remains backward compatible and enables every bundle.
+Boxes, arrow keys and `j`/`k` all work. Output longer than the screen can be
+scrolled. Set `NO_COLOR=1` to drop the color styling.
 
-## CLI usage
+## Security
 
-Check authentication and appliance connectivity:
+- Manifests carry no credentials: Morpheus Cypher generates persona passwords
+  at apply time, and validation rejects `password`, `token` or `access_token`
+  keys outright.
+- Tokens come from `MORPHEUS_API_TOKEN` or a `0600` config file, never from
+  command-line arguments, which other users can read.
+- Everything Leroy creates carries an ownership marker. `destroy` verifies it
+  before deleting and stops if anything does not match.
+- TLS verification defaults to **off** for appliances with internal
+  certificates. Set `MORPHEUS_VERIFY_TLS=true` when the certificate is trusted.
+- Use a dedicated least-privilege service account on a demonstration appliance.
 
-```bash
-leroy status
-```
+State lives under `${XDG_STATE_HOME:-$HOME/.local/state}/leroy` with user-only
+permissions and holds resource IDs, never passwords.
 
-List environment labels:
+## Configuration
 
-```bash
-leroy environments list
-```
+Values resolve from built-in defaults, then
+`${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config`, then `--config FILE`, then
+exported `MORPHEUS_*` variables. See
+[`config/leroy.conf.example`](config/leroy.conf.example). Missing values are
+requested interactively when a terminal is available; automation still fails
+without prompting.
 
-Retrieve one environment by numeric ID:
-
-```bash
-leroy environments get 42
-```
-
-Return raw JSON for automation:
-
-```bash
-leroy --output json environments list | jq '.environments[] | .name'
-```
-
-Use a non-default configuration file:
-
-```bash
-leroy --config /secure/path/production.conf status
-```
-
-List collections with pagination applied, so a result is not limited to the first page:
-
-```bash
-leroy --output json environments list | jq '.environments | length'
-```
-
-Run `leroy --help` for the currently implemented command surface. CLI output written to standard output is intended for consumers; diagnostics are written to standard error.
-
-## Security model
-
-Leroy uses the Morpheus bearer-token authentication model. Tokens are never accepted as command-line flags because process arguments may be visible to other users. TLS verification defaults to disabled to support demonstration appliances with internal certificates; set `MORPHEUS_VERIFY_TLS=true` whenever the appliance has a trusted certificate. Demo-user passwords are generated by Morpheus Cypher and are never written to manifests or local state.
-
-Use a dedicated Morpheus service account with the least privilege required for the intended operations. Store configuration files containing tokens with mode `0600`, prevent debug logs from recording authorization headers, and rotate credentials according to your organization’s policy.
+Global options: `--config FILE`, `--output table|json`, `-h`, `-V`.
+Exit codes are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Development
 
 ```bash
-make check      # syntax checks, ShellCheck, and tests when available
-make test       # bats test suite
-make format     # format Bash sources with shfmt
+make check   # syntax, ShellCheck and the test suite
+make web     # serve the builder at http://localhost:8765/
 ```
 
-The automated suite never contacts a Morpheus appliance. [`docs/APPLIANCE_VALIDATION.md`](docs/APPLIANCE_VALIDATION.md) lists every behavior that stays unverified until it runs against one, with the checks to perform and the expected results.
+No test contacts a Morpheus appliance, so a passing suite does not prove that
+Morpheus accepts a request. Everything that only an appliance can settle is
+listed in [`docs/APPLIANCE_VALIDATION.md`](docs/APPLIANCE_VALIDATION.md).
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`API_REFERENCE.md`](API_REFERENCE.md), [`docs/APPLIANCE_VALIDATION.md`](docs/APPLIANCE_VALIDATION.md), and [`docs/FEEDBACK.md`](docs/FEEDBACK.md) for contribution workflow, design details, endpoint coverage, appliance validation, and field feedback.
+| Document | |
+| --- | --- |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Design, schema versions, exit codes |
+| [`API_REFERENCE.md`](API_REFERENCE.md) | Morpheus endpoint coverage |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Workflow and conventions |
+| [`web/README.md`](web/README.md) | The builder |
+| [`docs/FEEDBACK.md`](docs/FEEDBACK.md) | Field findings |
 
-## Project status
+## Status
 
-The public interface is not yet stable. Commands, configuration keys, and output schemas may change before `1.0.0`. Changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
-
-## License
-
-Leroy is available under the [MIT License](LICENSE).
+Version `0.2.0`. The public interface is not stable yet: commands,
+configuration keys and output schemas may change before `1.0.0`. Changes are
+recorded in [`CHANGELOG.md`](CHANGELOG.md). Available under the
+[MIT License](LICENSE).
