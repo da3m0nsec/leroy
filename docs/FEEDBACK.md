@@ -76,6 +76,30 @@ Found by reading the code and driving the TUI in a pseudo-terminal, not on an ap
 - **Expected:** One row per check in table and JSON output, keeping exit code 9.
 - **Status:** Resolved locally; appliance confirmation pending (`AV-060` to `AV-065`).
 
+### LRY-012 — The TUI could reach only one saved deployment
+
+- **Observed:** The manifest-source screen took a file path, so a second deployment recorded in the state directory was invisible unless its manifest file was still at hand.
+- **Expected:** List saved deployments and use the manifest each state file embeds.
+- **Status:** Resolved locally; appliance confirmation pending (`AV-089`).
+
+### LRY-013 — Build mutated Morpheus with no preview
+
+- **Observed:** Pressing `a` went straight to apply, although the architecture describes preview and confirmation for mutating workflows.
+- **Expected:** Plan first, report the counts, and require confirmation.
+- **Status:** Resolved locally; appliance confirmation pending (`AV-090`).
+
+### LRY-014 — Force was unreachable from the TUI
+
+- **Observed:** A destroy stopped by an ownership mismatch could only be completed by dropping to the CLI with `--force`.
+- **Expected:** Offer a gated retry, and only for failures force can resolve.
+- **Status:** Resolved locally; appliance confirmation pending (`AV-091`).
+
+### LRY-015 — The Leroy-identity check did not evaluate as written
+
+- **Observed:** `remote_has_leroy_identity` piped its input through `tostring` before testing individual values, so the name-prefix arm could never match, and that prefix was hardcoded rather than read from the manifest.
+- **Expected:** Test the values of the resource, using the manifest's prefix.
+- **Status:** Resolved locally; appliance confirmation pending (`AV-078`). Resources matching the prefix already satisfied the ownership check, so the correction does not widen what force may delete unless a manifest sets no prefix.
+
 ## Validation requested
 
 On the same appliance build:

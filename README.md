@@ -96,7 +96,7 @@ It runs in the terminal's alternate screen and needs no UI framework. Navigate w
 | `r` | Recreate: destroy, then build the current selection |
 | `x` | Destroy the demo the dashboard is showing |
 | `c` | Select deployment components |
-| `m` | Choose the manifest source |
+| `m` | Choose the manifest source: preset, a saved deployment, or a file |
 | `w` | Create a custom manifest with the wizard |
 | `q` | Quit |
 
@@ -104,7 +104,11 @@ The dashboard reports the appliance, the connection and authenticated identity, 
 
 Choose **Select deployment components** (`c`) to open a checkbox screen. All seven bundles are enabled initially: multitenancy, persona roles and users, environments, groups, policies, automation, and service catalog. Use the arrow keys or `j`/`k`, press `Space` to toggle, `a` to select all, `n` to clear all, `Enter` to save, or `Esc` to cancel. Dependencies are kept valid automatically: multitenancy and persona roles move together, policies require groups, and catalog requires automation. With multitenancy disabled, selected platform content is created in the Master Tenant instead. An asterisk marks a component that differs from the saved deployment, and the dashboard says when the selection needs a recreate.
 
-Choose **Choose manifest source** (`m`) to drive the TUI from a manifest file instead of the built-in preset; an empty answer returns to the preset. A manifest saved by the wizard (`w`) becomes the active source automatically. An unreadable or invalid manifest is refused and the previous source is kept.
+Choose **Choose manifest source** (`m`) to pick what the TUI operates on: the built-in preset, one of the deployments recorded in the state directory, or a manifest file you name. Every state file embeds the manifest it was built from, so a saved deployment can be selected without still having its manifest; a deployment recorded against a different appliance is labelled as such. A manifest saved by the wizard (`w`) becomes the active source automatically. An unreadable or invalid manifest is refused and the previous source is kept.
+
+**Build selected demo** (`a`) previews first: it runs the plan, lets you scroll it when it is longer than the screen, then reports how many resources it would create, update, and adopt, and asks for confirmation before anything is sent to Morpheus. A plan that reports conflicts fails the preview, so a build never starts over one.
+
+If destruction or recreation stops because a resource no longer matches the ownership marker Leroy recorded, the TUI offers to retry with force and requires you to type `force`. Forcing still refuses any resource that carries no Leroy identity at all. Failures for other reasons, such as state belonging to a different appliance, are not offered a retry, because forcing would not help.
 
 Inventory, verification, destruction, and recreation are only offered when a saved deployment exists for the active demo ID, and destruction and recreation require the exact organization name recorded in that state. Action output is shown while it runs; anything longer than the screen can be scrolled afterwards with `j`/`k`, `Space`, and `q`, because the alternate screen keeps no scrollback. Failures return to the dashboard instead of terminating the session. The dashboard fits an 80x24 terminal and drops its group headings when the terminal is shorter. Set `NO_COLOR=1` if the terminal should not emit color styling.
 
@@ -123,7 +127,7 @@ leroy demo plan
 leroy demo apply
 ```
 
-Use a custom manifest produced by the TUI wizard or edited from the preset:
+Use a custom manifest produced by the TUI wizard or edited from the preset. The wizard prints a summary of what it generated and writes the complete manifest to the file:
 
 ```bash
 leroy demo wizard

@@ -99,6 +99,7 @@ Morpheus. A rejection surfaces as exit code 5 with the API message.
 | AV-071 | Second apply is idempotent | Every plan row is `unchanged`; nothing is recreated |
 | AV-072 | Interrupted apply resumes | Interrupt mid-apply, rerun, and the run completes without duplicating resources (exit 10 on the interrupted run) |
 | AV-073 | Ownership verification before deletion | A resource whose marker was edited by hand refuses deletion with exit 8 unless `--force` |
+| AV-078 | Force deletion after an ownership mismatch | With `--force`, a resource still carrying a Leroy identity is deleted; a resource with none is still refused with exit 8 |
 | AV-074 | Reverse-order destroy | `demo destroy` removes everything it created and leaves the appliance otherwise unchanged |
 | AV-075 | Recreate after a component change | Changing the selection with saved state exits 8; recreate applies the new selection |
 | AV-076 | Master Tenant deployment without multitenancy | Selected content is created in the Master Tenant and payloads carry no tenant account (LRY-005) |
@@ -119,6 +120,9 @@ harness. What remains unverified is everything downstream of a real API call.
 | AV-084 | `i` inventory after a build | Every created resource is listed with its Morpheus ID |
 | AV-085 | `v` and `d` verification | The per-check report matches the appliance state |
 | AV-086 | `x` destroy and `r` recreate | The typed organization name matches the saved deployment and the action completes |
+| AV-089 | `m` selecting a saved deployment | The dashboard switches to that demo's ID, components, and state, and a deployment from another appliance is labelled |
+| AV-090 | `a` build preview | The plan counts match the resources the build then creates, and cancelling sends nothing |
+| AV-091 | TUI force retry after a mismatch | The offer appears only for an ownership mismatch, and typing `force` completes the deletion |
 | AV-087 | `w` wizard, then plan and apply from the generated manifest | The generated demo ID, tenant subdomain, and Cypher namespace are used throughout |
 | AV-088 | Long output paging during a real build | Scrolling reaches the end of the output without truncation |
 
@@ -142,7 +146,8 @@ leroy demo state                            # AV-077
 leroy demo verify                           # structural report
 leroy demo verify --deep                    # AV-060..AV-065
 leroy demo destroy --demo-id leroy-demo --yes  # AV-053, AV-074
+# then rename one resource in the Morpheus UI, rebuild, and retry destroy for AV-073 and AV-078
 ```
 
-Then repeat the interactive pass in the TUI for AV-080 to AV-088, including one
+Then repeat the interactive pass in the TUI for AV-080 to AV-091, including one
 run with multitenancy deselected for AV-076 and one recreate for AV-075.

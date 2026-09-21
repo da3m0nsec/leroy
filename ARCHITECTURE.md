@@ -79,7 +79,9 @@ The dashboard groups actions by operator intent: inspect, build, validate, lifec
 
 The dashboard derives every row it shows from one source of truth: the manifest currently selected in the TUI. `tui_sync_manifest` rebuilds the effective manifest from the selected source plus the selected components, then republishes the demo ID, organization name, state file, and expected resource count that the rows and the lifecycle actions use. Resource totals come from expanding the manifest, not from per-bundle constants, so a customized manifest is described by its own contents. Actions that need saved state are offered only when that state exists, and destruction confirms with the organization name recorded in it.
 
-Interactive screens that read input, the wizard and the manifest and component selectors, run outside the captured action runner: the runner pipes action output so it can be scrolled afterwards, and the wizard requires a terminal on standard output.
+Interactive screens that read input, the wizard and the manifest and component selectors, run outside the captured action runner. The runner copies action output through a FIFO rather than a pipeline, because a pipeline runs the action in a subshell and discards the session state it updates; the wizard additionally requires a terminal on standard output.
+
+The manifest source is one of three kinds: the built-in preset, a manifest file, or a deployment recorded in the state directory. A saved deployment is used by extracting the manifest its state file embeds, so every source reduces to a manifest file and the rest of the TUI needs no special case. Building previews the plan and requires confirmation before it mutates anything, and a destroy that stops on an ownership mismatch offers a gated retry with force; that offer is made only when the failure names `--force` as the remedy, so failures force cannot resolve are not offered one.
 
 The TUI owns navigation, selection, human-readable tables, prompts, status summaries, and confirmation. It delegates all actual work to command functions. Mutating workflows follow a consistent sequence:
 

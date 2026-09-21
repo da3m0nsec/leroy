@@ -418,3 +418,110 @@ load test_helper
   [ "$status" -eq 0 ]
   jq -e '(.environments | length) == 1 and .environments[0].id == 1' <<<"$output"
 }
+
+@test "manifest source list offers saved deployments" {
+  local state_dir="$BATS_TEST_TMPDIR/state"
+  run bash -c '
+    source "$1"
+    LEROY_STATE_DIR="$2"; MORPHEUS_URL=https://morpheus.test; APPLIANCE_BUILD=9.0.0
+    tui_bootstrap_manifest; state_init
+    tui_saved_demos
+  ' _ "$LEROY_BIN" "$state_dir"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "leroy-demo	"*"leroy-demo.json	24	0	https://morpheus.test" ]]
+}
+
+@test "selecting a saved deployment adopts its manifest and components" {
+  local state_dir="$BATS_TEST_TMPDIR/state"
+  run bash -c '
+    source "$1"
+    LEROY_STATE_DIR="$2"; MORPHEUS_URL=https://morpheus.test; APPLIANCE_BUILD=9.0.0
+    TUI_FEATURES_JSON='"'"'{"multitenancy":false,"roles":false,"environments":true,"groups":true,"policies":true,"automation":true,"catalog":true}'"'"'
+    manifest_to_temp
+    jq ".metadata.id=\"acme-demo\" | .metadata.name=\"Acme Demo\" | .metadata.prefix=\"acme-demo\" | .tenant.subdomain=\"acme-demo\"" \
+      "$CURRENT_MANIFEST" >"$CURRENT_MANIFEST.acme"
+    mv "$CURRENT_MANIFEST.acme" "$CURRENT_MANIFEST"
+    STATE_FILE="$LEROY_STATE_DIR/acme-demo.json"; state_init
+    tui_bootstrap_manifest
+    tui_use_saved_demo "$LEROY_STATE_DIR/acme-demo.json"
+    tui_sync_manifest
+    printf "%s|%s|%s|%s\n" "$TUI_DEMO_ID" "$TUI_DEMO_NAME" "$TUI_RESOURCE_COUNT" "$(tui_selected_feature_count)"
+  ' _ "$LEROY_BIN" "$state_dir"
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme-demo|Acme Demo|13|5" ]
+}
+
+@test "build preview counts plan actions" {
+  local plan="$BATS_TEST_TMPDIR/plan.txt"
+  printf '%s\n' 'ACTION     TYPE   NAME' 'create     role   A' 'create     user   B' \
+    'adopt      cypher C' 'unchanged  group  D' 'conflict   policy E' >"$plan"
+  run bash -c 'source "$1"; tui_plan_counts "$2"' _ "$LEROY_BIN" "$plan"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2 0 1 1 1" ]
+}
+
+@test "force is offered only for an ownership mismatch" {
+  run bash -c '
+    source "$1"
+    tui_action_header() { :; }
+    tui_wait() { :; }
+    tui_run_action() { printf "forced:%s\n" "$1"; }
+    TUI_LAST_RC=8; TUI_LAST_FORCEABLE=false
+    tui_force_retry "Destroy" true </dev/null
+    TUI_LAST_RC=5; TUI_LAST_FORCEABLE=true
+    tui_force_retry "Destroy" true </dev/null
+    TUI_LAST_RC=8; TUI_LAST_FORCEABLE=true
+    tui_force_retry "Destroy" true <<<"force"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"forced:Destroy (forced)"* ]]
+  [ "$(grep -c 'forced:' <<<"$output")" -eq 1 ]
+}
+
+@test "a declined force confirmation changes nothing" {
+  run bash -c '
+    source "$1"
+    tui_action_header() { :; }
+    tui_wait() { :; }
+    tui_run_action() { printf "forced:%s\n" "$1"; }
+    TUI_LAST_RC=8; TUI_LAST_FORCEABLE=true
+    tui_force_retry "Destroy" true <<<"yes please"
+    printf "%s\n" "$TUI_LAST_RESULT"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"forced:"* ]]
+  [[ "$output" == *"Cancelled: Destroy"* ]]
+}
+
+@test "component flags are computed in one pass" {
+  run bash -c '
+    source "$1"
+    TUI_FEATURES_JSON="$(jq -c ".automation=false | .catalog=false" <<<"$(feature_defaults)")"
+    TUI_COMPONENT_KEYS_JSON='"'"'["multitenancy","automation","catalog"]'"'"'
+    tui_component_flags "$(feature_defaults)" | tr " " "_"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "x_" ]
+  [ "${lines[1]}" = "_*" ]
+  [ "${lines[2]}" = "_*" ]
+}
+
+@test "the wizard summarizes a manifest instead of dumping it" {
+  run bash -c 'source "$1"; bash "$1" demo preset | manifest_summary' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Demo ID:      leroy-demo"* ]]
+  [[ "$output" == *"Resources:    24"* ]]
+  [[ "$output" != *"schemaVersion"* ]]
+}
+
+@test "a renamed resource still counts as a Leroy identity" {
+  run bash -c '
+    source "$1"
+    manifest_to_temp
+    remote_has_leroy_identity "{\"id\":5,\"name\":\"leroy-demo-renamed\"}" || exit 1
+    remote_has_leroy_identity "{\"id\":5,\"description\":\"Managed by Leroy demo:other\"}" || exit 2
+    remote_has_leroy_identity "{\"id\":42,\"name\":\"production\"}" && exit 3
+    exit 0
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+}

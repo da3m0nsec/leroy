@@ -36,6 +36,8 @@ TUI_ACTIVE=false
 TUI_FEATURES_JSON=""
 TUI_MANIFEST_FILE=""
 TUI_MANIFEST_LABEL="Built-in preset"
+TUI_MANIFEST_ORIGIN=""
+TUI_MANIFEST_KIND="preset"
 TUI_STATE_FILE=""
 TUI_DEMO_ID=""
 TUI_DEMO_NAME=""
@@ -44,6 +46,9 @@ TUI_IDENTITY=""
 TUI_BUILD=""
 TUI_CONNECTION_STATE="Not checked"
 TUI_LAST_RESULT="No actions run in this session"
+TUI_LAST_RC=0
+TUI_LAST_FORCEABLE=false
+TUI_MANIFEST_TEMP=""
 LAST_WIZARD_FILE=""
 TUI_RESET='' TUI_BOLD='' TUI_DIM='' TUI_ACCENT='' TUI_MUTED=''
 TUI_SUCCESS='' TUI_WARNING='' TUI_DANGER='' TUI_SELECTED=''
@@ -59,6 +64,7 @@ cleanup() {
   tui_leave_screen 2>/dev/null || true
   [[ -z "$ACTIVE_AUTH_FILE" ]] || rm -f "$ACTIVE_AUTH_FILE"
   [[ -z "$VERIFY_RESULTS" ]] || rm -f "$VERIFY_RESULTS"
+  [[ -z "$TUI_MANIFEST_TEMP" ]] || rm -f "$TUI_MANIFEST_TEMP"
   if [[ -n "$MASTER_TOKEN" ]]; then
     for index in "${!TEMP_TOKEN_USERS[@]}"; do
       token_id="${TEMP_TOKEN_IDS[$index]:-}"
@@ -453,8 +459,17 @@ remote_is_owned() {
   ' <<<"$response" >/dev/null
 }
 
+# Decides whether a resource that failed the ownership check still looks like
+# Leroy's, which is what --force is allowed to delete. The tostring arm must be
+# parenthesized: piping into it hides every other value from the name check.
 remote_has_leroy_identity() {
-  jq -e 'tostring | contains("Managed by Leroy demo:") or ([.. | strings] | any(startswith("leroy-")))' <<<"$1" >/dev/null
+  local prefix
+  prefix="$(jq -r '.metadata.prefix // empty' "$CURRENT_MANIFEST" 2>/dev/null || true)"
+  [[ -n "$prefix" && "$prefix" != null ]] || prefix='leroy-'
+  jq -e --arg prefix "$prefix" '
+    (tostring | contains("Managed by Leroy demo:")) or
+    ([.. | strings] | any(startswith($prefix)))
+  ' <<<"$1" >/dev/null
 }
 
 find_remote() {
@@ -959,6 +974,23 @@ demo_list() {
     done
 }
 
+# Summarizes a manifest read from standard input. The wizard writes the whole
+# document to the file; printing it to the terminal scrolls the prompt away.
+manifest_summary() {
+  local manifest
+  manifest="$(cat)"
+  jq -r --argjson defaults "$(feature_defaults)" '
+    "Demo ID:      \(.metadata.id)",
+    "Organization: \(.metadata.name)",
+    "Subdomain:    \(.tenant.subdomain)",
+    "Components:   \(($defaults * (.features // {})) | to_entries | map(select(.value) | .key) | join(", "))",
+    "Personas:     \([.personas[].username] | join(", "))",
+    "Environments: \(.environments | length), groups: \(.groups | length), policies: \(.policies | length)",
+    "Cypher keys:  password/24/\(.metadata.id)/*"
+  ' <<<"$manifest"
+  printf 'Resources:    %s\n' "$(resource_count <<<"$manifest")"
+}
+
 wizard_manifest() {
   [[ -t 0 && -t 1 ]] || { die "$EXIT_USAGE" 'wizard requires an interactive terminal'; return; }
   local id name subdomain output answer generated
@@ -982,7 +1014,10 @@ wizard_manifest() {
     walk(if type=="string" then gsub("Managed by Leroy demo:leroy-demo";"Managed by Leroy demo:"+$id) else . end)
   ')"
   if [[ -n "$TUI_FEATURES_JSON" ]]; then generated="$(jq --argjson features "$TUI_FEATURES_JSON" '.features=$features' <<<"$generated")"; fi
-  printf '\n%s\n\nSave this manifest to %s? [y/N]: ' "$(jq . <<<"$generated")" "$output"; read -r answer
+  printf '\n'
+  manifest_summary <<<"$generated"
+  printf '\nThe complete manifest is written to the file.\n'
+  printf '\nSave this manifest to %s? [y/N]: ' "$output"; read -r answer
   [[ "$answer" =~ ^[Yy]$ ]] || return 0
   [[ ! -e "$output" ]] || { die "$EXIT_CONFLICT" "file already exists: $output"; return; }
   printf '%s\n' "$generated" | jq -S . >"$output"; chmod 600 "$output"; printf 'Saved %s\n' "$output"
@@ -1121,9 +1156,7 @@ tui_sync_manifest() {
 }
 
 tui_bootstrap_manifest() {
-  TUI_MANIFEST_FILE=""
-  TUI_MANIFEST_LABEL='Built-in preset'
-  TUI_FEATURES_JSON="$(feature_defaults)"
+  tui_use_preset
   tui_sync_manifest || return
   if [[ -r "$TUI_STATE_FILE" ]]; then
     TUI_FEATURES_JSON="$(tui_deployed_features)"
@@ -1179,10 +1212,22 @@ tui_toggle_component() {
   esac
 }
 
+# Emits one "<checked><changed>" pair per component, in order. One jq call keeps
+# the selector responsive; a call per checkbox made every redraw visibly slow.
+tui_component_flags() {
+  jq -rn --argjson selected "$TUI_FEATURES_JSON" \
+    --argjson deployed "${1:-null}" --argjson keys "$TUI_COMPONENT_KEYS_JSON" '
+    $keys[] |
+      (if $selected[.] == true then "x" else " " end) +
+      (if ($deployed != null and $selected[.] != $deployed[.]) then "*" else " " end)'
+}
+
 tui_render_components() {
   local selected="$1" width index key checked row description available gap deployed marker
+  local -a flags=()
   width="$(tui_columns)"
   deployed="$(tui_deployed_features)"
+  mapfile -t flags < <(tui_component_flags "${deployed:-null}")
   tui_clear
   printf '%s%s  DEPLOYMENT COMPONENTS%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$TUI_RESET"
   tui_rule "$width"
@@ -1191,12 +1236,9 @@ tui_render_components() {
   for index in "${!TUI_COMPONENT_KEYS[@]}"; do
     key="${TUI_COMPONENT_KEYS[$index]}"
     description="${TUI_COMPONENT_HINTS[$index]}"
-    if jq -e --arg key "$key" '.[$key] == true' <<<"$TUI_FEATURES_JSON" >/dev/null; then checked='x'; else checked=' '; fi
-    marker=' '
-    if [[ -n "$deployed" ]] && ! jq -e --arg key "$key" --argjson deployed "$deployed" '.[$key] == $deployed[$key]' <<<"$TUI_FEATURES_JSON" >/dev/null; then
-      marker='*'
-      description="changed - ${description}"
-    fi
+    checked="${flags[$index]:0:1}"
+    marker="${flags[$index]:1:1}"
+    [[ "$marker" != '*' ]] || description="changed - ${description}"
     row="  [${checked}]${marker}${TUI_COMPONENT_LABELS[$index]}"
     if ((width >= 76)); then
       available=$((width - ${#row} - ${#description} - 2))
@@ -1212,14 +1254,19 @@ tui_render_components() {
 }
 
 tui_select_components() {
-  local selected=0 key original="$TUI_FEATURES_JSON" count
+  local selected=0 key original="$TUI_FEATURES_JSON" count dirty=false
   local TUI_COMPONENT_NOTICE='An asterisk marks a component that differs from the saved deployment.'
   local -a TUI_COMPONENT_KEYS=(multitenancy roles environments groups policies automation catalog)
+  local TUI_COMPONENT_KEYS_JSON
   local -a TUI_COMPONENT_LABELS=('Multitenancy' 'Persona roles & users' 'Environments' 'Groups' 'Policies' 'Automation' 'Service catalog')
   local -a TUI_COMPONENT_HINTS=('Tenant and tenant role' 'Admin, operator and consumer personas' 'Development, staging and production' 'Development and production scopes' 'MOTD, naming, expiry and Cypher' 'Input, task and workflow' 'Self-service catalog item')
   count="${#TUI_COMPONENT_KEYS[@]}"
+  TUI_COMPONENT_KEYS_JSON="$(printf '%s\n' "${TUI_COMPONENT_KEYS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
   while true; do
-    tui_sync_manifest >/dev/null 2>&1 || true
+    if [[ "$dirty" == true ]]; then
+      tui_sync_manifest >/dev/null 2>&1 || true
+      dirty=false
+    fi
     tui_render_components "$selected"
     key="$(tui_read_key)"
     case "$key" in
@@ -1227,14 +1274,16 @@ tui_select_components() {
       down | j) selected=$(((selected + 1) % count)) ;;
       home) selected=0 ;;
       end) selected=$((count - 1)) ;;
-      ' ') tui_toggle_component "${TUI_COMPONENT_KEYS[$selected]}" ;;
+      ' ') tui_toggle_component "${TUI_COMPONENT_KEYS[$selected]}"; dirty=true ;;
       a)
         TUI_FEATURES_JSON="$(feature_defaults | jq -Sc .)"
         TUI_COMPONENT_NOTICE='All deployment components selected.'
+        dirty=true
         ;;
       n)
         TUI_FEATURES_JSON="$(jq -Sc 'map_values(false)' <<<"$(feature_defaults)")"
         TUI_COMPONENT_NOTICE='All deployment components cleared.'
+        dirty=true
         ;;
       enter)
         tui_sync_manifest || true
@@ -1251,47 +1300,154 @@ tui_select_components() {
   done
 }
 
-# Lets the operator drive the TUI from a manifest produced by the wizard or
-# edited by hand instead of only the built-in preset.
-tui_select_manifest() {
-  local path previous_file="$TUI_MANIFEST_FILE" previous_label="$TUI_MANIFEST_LABEL" previous_features="$TUI_FEATURES_JSON"
-  tui_action_header 'Manifest source'
-  printf 'Current source: %s\n' "${TUI_MANIFEST_FILE:-$TUI_MANIFEST_LABEL}"
-  printf 'Demo ID:        %s\n' "$TUI_DEMO_ID"
-  printf 'Organization:   %s\n\n' "$TUI_DEMO_NAME"
-  printf 'Enter a manifest path, or leave it empty to use the built-in preset.\n\n> '
+# Lists the deployments recorded in the state directory. Each state file embeds
+# the manifest it was built from, so a saved deployment can be selected in the
+# TUI without the operator still holding its manifest file.
+tui_saved_demos() {
+  local file
+  [[ -d "$LEROY_STATE_DIR" ]] || return 0
+  for file in "$LEROY_STATE_DIR"/*.json; do
+    [[ -r "$file" ]] || continue
+    jq -e '.stateVersion == 1 and (.manifest.metadata.id | type == "string")' "$file" >/dev/null 2>&1 || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$(jq -r '.manifest.metadata.id' "$file")" \
+      "$file" \
+      "$(jq -c '.manifest' "$file" | resource_count)" \
+      "$(jq -r '.resources | length' "$file")" \
+      "$(jq -r '.applianceUrl // ""' "$file")"
+  done
+}
+
+tui_use_preset() {
+  TUI_MANIFEST_FILE=""
+  TUI_MANIFEST_ORIGIN=""
+  TUI_MANIFEST_KIND='preset'
+  TUI_MANIFEST_LABEL='Built-in preset'
+  TUI_FEATURES_JSON="$(feature_defaults)"
+}
+
+tui_use_manifest_file() {
+  local path="$1"
+  TUI_MANIFEST_FILE="$path"
+  TUI_MANIFEST_ORIGIN="$path"
+  TUI_MANIFEST_KIND='file'
+  TUI_MANIFEST_LABEL="${path##*/}"
+  TUI_FEATURES_JSON="$(manifest_features "$path" 2>/dev/null | jq -Sc . 2>/dev/null || feature_defaults)"
+}
+
+tui_use_saved_demo() {
+  local state="$1" temp
+  temp="$(mktemp "${TMPDIR:-/tmp}/leroy-saved.XXXXXX")" || return "$EXIT_API"
+  jq -S '.manifest' "$state" >"$temp" || { rm -f "$temp"; return "$EXIT_RESPONSE"; }
+  [[ -z "$TUI_MANIFEST_TEMP" ]] || rm -f "$TUI_MANIFEST_TEMP"
+  TUI_MANIFEST_TEMP="$temp"
+  TUI_MANIFEST_FILE="$temp"
+  TUI_MANIFEST_ORIGIN="$state"
+  TUI_MANIFEST_KIND='saved'
+  TUI_MANIFEST_LABEL='Saved deployment'
+  TUI_FEATURES_JSON="$(manifest_features "$temp" | jq -Sc .)"
+}
+
+tui_render_manifest_sources() {
+  local selected="$1" width index row hint available gap marker
+  width="$(tui_columns)"
+  tui_clear
+  printf '%s%s  MANIFEST SOURCE%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$TUI_RESET"
+  tui_rule "$width"
+  printf '  %s\n\n' "$(tui_crop 'The selected source drives the demo ID, the components, and every action.' "$((width - 2))")"
+  for index in "${!TUI_SOURCE_LABELS[@]}"; do
+    if [[ "${TUI_SOURCE_ORIGINS[$index]}" == "$TUI_MANIFEST_ORIGIN" ]]; then marker='o'; else marker=' '; fi
+    row="  (${marker}) ${TUI_SOURCE_LABELS[$index]}"
+    hint="${TUI_SOURCE_HINTS[$index]}"
+    if ((width >= 76)) && [[ -n "$hint" ]]; then
+      available=$((width - ${#row} - ${#hint} - 2))
+      ((available < 1)) && available=1
+      printf -v gap '%*s' "$available" ''
+      row="${row}${gap}${hint}"
+    fi
+    row="$(tui_crop "$row" "$width")"
+    if ((index == selected)); then printf '%s%-*s%s\n' "$TUI_SELECTED" "$width" "$row" "$TUI_RESET"; else printf '%-*s\n' "$width" "$row"; fi
+  done
+  printf '\n%s  %s%s\n' "$TUI_WARNING" "$(tui_crop "$TUI_SOURCE_NOTICE" "$((width - 2))")" "$TUI_RESET"
+  printf '%s  Enter select  Esc cancel%s\n' "$TUI_DIM" "$TUI_RESET"
+}
+
+tui_prompt_manifest_path() {
+  local path
+  tui_action_header 'Manifest file'
+  printf 'Enter a manifest path, or leave it empty to cancel.\n\n> '
   printf '\033[?25h'
   IFS= read -r path || path=''
   printf '\033[?25l'
-  if [[ -z "$path" ]]; then
-    TUI_MANIFEST_FILE=""
-    TUI_MANIFEST_LABEL='Built-in preset'
-    TUI_FEATURES_JSON="$(feature_defaults)"
-  elif [[ ! -r "$path" ]]; then
+  [[ -n "$path" ]] || return 1
+  if [[ ! -r "$path" ]]; then
     TUI_LAST_RESULT="Manifest is not readable: $path"
     printf '\n%sManifest file is not readable: %s%s\n' "$TUI_DANGER" "$path" "$TUI_RESET"
     tui_wait
-    return 0
-  else
-    TUI_MANIFEST_FILE="$path"
-    TUI_MANIFEST_LABEL="${path##*/}"
-    TUI_FEATURES_JSON="$(manifest_features "$path" 2>/dev/null | jq -Sc . 2>/dev/null || feature_defaults)"
+    return 1
   fi
-  if ! tui_sync_manifest; then
-    TUI_MANIFEST_FILE="$previous_file"
-    TUI_MANIFEST_LABEL="$previous_label"
-    TUI_FEATURES_JSON="$previous_features"
-    tui_sync_manifest || true
-    TUI_LAST_RESULT='Manifest was rejected; previous source kept'
-    printf '\n%sThe manifest is invalid. The previous source is still active.%s\n' "$TUI_DANGER" "$TUI_RESET"
-    tui_wait
-    return 0
-  fi
-  TUI_LAST_RESULT="Manifest source: ${TUI_MANIFEST_LABEL}"
-  printf '\n%sActive manifest: %s%s\n' "$TUI_SUCCESS" "${TUI_MANIFEST_FILE:-$TUI_MANIFEST_LABEL}" "$TUI_RESET"
-  printf 'Demo ID: %s, organization: %s, resources: %s\n' "$TUI_DEMO_ID" "$TUI_DEMO_NAME" "$TUI_RESOURCE_COUNT"
-  tui_wait
-  return 0
+  printf '%s\n' "$path"
+}
+
+tui_select_manifest() {
+  local selected=0 key count index id state expected recorded appliance
+  local previous_file="$TUI_MANIFEST_FILE" previous_origin="$TUI_MANIFEST_ORIGIN"
+  local previous_kind="$TUI_MANIFEST_KIND" previous_label="$TUI_MANIFEST_LABEL"
+  local previous_features="$TUI_FEATURES_JSON" path
+  local TUI_SOURCE_NOTICE='Saved deployments are read from the state directory.'
+  local -a TUI_SOURCE_LABELS=('Built-in preset') TUI_SOURCE_HINTS=('') TUI_SOURCE_KINDS=(preset) TUI_SOURCE_ORIGINS=('')
+  TUI_SOURCE_HINTS[0]="$(preset_manifest | resource_count) resources"
+  while IFS=$'\t' read -r id state expected recorded appliance; do
+    [[ -n "$id" ]] || continue
+    TUI_SOURCE_LABELS+=("$id")
+    TUI_SOURCE_KINDS+=(saved)
+    TUI_SOURCE_ORIGINS+=("$state")
+    if [[ -n "$appliance" && "$appliance" != "$MORPHEUS_URL" ]]; then
+      TUI_SOURCE_HINTS+=("${recorded}/${expected} recorded, other appliance")
+    else
+      TUI_SOURCE_HINTS+=("${recorded}/${expected} recorded")
+    fi
+  done < <(tui_saved_demos)
+  TUI_SOURCE_LABELS+=('Manifest file...')
+  TUI_SOURCE_KINDS+=(file)
+  TUI_SOURCE_ORIGINS+=($'\x01none')
+  TUI_SOURCE_HINTS+=('Type a path')
+  count="${#TUI_SOURCE_LABELS[@]}"
+  for index in "${!TUI_SOURCE_ORIGINS[@]}"; do
+    [[ "${TUI_SOURCE_ORIGINS[$index]}" == "$TUI_MANIFEST_ORIGIN" ]] && selected="$index"
+  done
+  while true; do
+    tui_render_manifest_sources "$selected"
+    key="$(tui_read_key)"
+    case "$key" in
+      up | k) selected=$(((selected + count - 1) % count)) ;;
+      down | j) selected=$(((selected + 1) % count)) ;;
+      home) selected=0 ;;
+      end) selected=$((count - 1)) ;;
+      q | escape) TUI_LAST_RESULT='Manifest source unchanged'; return 0 ;;
+      enter)
+        case "${TUI_SOURCE_KINDS[$selected]}" in
+          preset) tui_use_preset ;;
+          saved) tui_use_saved_demo "${TUI_SOURCE_ORIGINS[$selected]}" || { TUI_SOURCE_NOTICE='That saved deployment could not be read.'; continue; } ;;
+          file)
+            path="$(tui_prompt_manifest_path)" || { TUI_SOURCE_NOTICE='No manifest file was selected.'; continue; }
+            tui_use_manifest_file "$path"
+            ;;
+        esac
+        if tui_sync_manifest; then
+          TUI_LAST_RESULT="Manifest source: ${TUI_MANIFEST_LABEL} (${TUI_DEMO_ID})"
+          return 0
+        fi
+        TUI_MANIFEST_FILE="$previous_file"
+        TUI_MANIFEST_ORIGIN="$previous_origin"
+        TUI_MANIFEST_KIND="$previous_kind"
+        TUI_MANIFEST_LABEL="$previous_label"
+        TUI_FEATURES_JSON="$previous_features"
+        tui_sync_manifest || true
+        TUI_SOURCE_NOTICE='That manifest is invalid; the previous source is still active.'
+        ;;
+    esac
+  done
 }
 
 tui_menu_row() {
@@ -1428,16 +1584,16 @@ tui_pager() {
 # Runs an action with live output and a copy on disk for scrolling. The copy is
 # made through a FIFO rather than a pipeline, because a pipeline would run the
 # action in a subshell and discard the session state it updates.
-tui_run_action() {
-  local title="$1" rc=0 output="" fifo="" tee_pid visible
+# Runs a command with live output and a copy in "$1" for scrolling, and returns
+# the command's status. The copy is made through a FIFO rather than a pipeline,
+# because a pipeline would run the command in a subshell and discard the session
+# state it updates. An empty path, or no mkfifo, means live output only.
+tui_capture() {
+  local output="$1" rc=0 fifo="" tee_pid
   shift
-  tui_action_header "$title"
-  printf '%sRunning...%s\n\n' "$TUI_DIM" "$TUI_RESET"
-  if output="$(mktemp "${TMPDIR:-/tmp}/leroy-output.XXXXXX")" && command -v mkfifo >/dev/null 2>&1; then
+  if [[ -n "$output" ]] && command -v mkfifo >/dev/null 2>&1; then
     fifo="${output}.fifo"
     mkfifo -m 600 "$fifo" 2>/dev/null || fifo=""
-  else
-    output=""
   fi
   if [[ -n "$fifo" ]]; then
     tee "$output" <"$fifo" &
@@ -1446,9 +1602,48 @@ tui_run_action() {
     wait "$tee_pid" 2>/dev/null || true
     rm -f "$fifo"
   else
-    [[ -z "$output" ]] || { rm -f "$output"; output=""; }
     "$@" || rc=$?
   fi
+  return "$rc"
+}
+
+tui_capture_file() {
+  local file
+  command -v mkfifo >/dev/null 2>&1 || return 0
+  file="$(mktemp "${TMPDIR:-/tmp}/leroy-output.XXXXXX")" || return 0
+  printf '%s\n' "$file"
+}
+
+tui_output_exceeds_screen() {
+  local output="$1" visible
+  [[ -n "$output" && -r "$output" ]] || return 1
+  visible=$(($(tui_lines) - 7))
+  ((visible >= 1)) || visible=1
+  (($(wc -l <"$output") > visible))
+}
+
+tui_finish_output() {
+  local output="$1" title="$2"
+  if tui_output_exceeds_screen "$output"; then
+    printf '\n%sOutput is longer than this screen. Press any key to scroll it.%s' "$TUI_DIM" "$TUI_RESET"
+    IFS= read -rsn1 _ || true
+    tui_pager "$output" "$title"
+  else
+    tui_wait
+  fi
+  [[ -z "$output" ]] || rm -f "$output"
+}
+
+tui_run_action() {
+  local title="$1" rc=0 output
+  shift
+  tui_action_header "$title"
+  printf '%sRunning...%s\n\n' "$TUI_DIM" "$TUI_RESET"
+  output="$(tui_capture_file)"
+  tui_capture "$output" "$@" || rc=$?
+  TUI_LAST_RC="$rc"
+  TUI_LAST_FORCEABLE=false
+  [[ -z "$output" ]] || ! grep -q -- '--force' "$output" || TUI_LAST_FORCEABLE=true
   if ((rc == 0)); then
     TUI_LAST_RESULT="Success: $title"
     [[ -z "$output" ]] || printf '\nCompleted successfully.\n' >>"$output"
@@ -1458,16 +1653,7 @@ tui_run_action() {
     [[ -z "$output" ]] || printf '\nAction failed with exit code %s.\n' "$rc" >>"$output"
     printf '\n%sAction failed with exit code %s.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
   fi
-  visible=$(($(tui_lines) - 7))
-  ((visible >= 1)) || visible=1
-  if [[ -n "$output" ]] && (($(wc -l <"$output") > visible)); then
-    printf '\n%sOutput is longer than this screen. Press any key to scroll it.%s' "$TUI_DIM" "$TUI_RESET"
-    IFS= read -rsn1 _ || true
-    tui_pager "$output" "$title"
-  else
-    tui_wait
-  fi
-  [[ -z "$output" ]] || rm -f "$output"
+  tui_finish_output "$output" "$title"
   tui_sync_manifest >/dev/null 2>&1 || true
   return 0
 }
@@ -1496,6 +1682,83 @@ tui_verify_action() { tui_sync_manifest && preflight && state_assert_appliance &
 tui_deep_verify_action() { tui_sync_manifest && preflight && state_assert_appliance && demo_verify true; }
 tui_inventory_action() { tui_sync_manifest && demo_state_report; }
 
+tui_plan_counts() {
+  awk '
+    $1 == "create" || $1 == "update" || $1 == "adopt" || $1 == "unchanged" || $1 == "conflict" { count[$1]++ }
+    END { printf "%d %d %d %d %d\n", count["create"] + 0, count["update"] + 0, count["adopt"] + 0, count["unchanged"] + 0, count["conflict"] + 0 }
+  ' "$1"
+}
+
+# Build previews the plan and asks for confirmation before it mutates Morpheus,
+# so the operator sees what an apply will do while it can still be refused.
+tui_build_screen() {
+  local rc=0 output key created updated adopted unchanged conflicts mutations
+  tui_action_header 'Build selected demo'
+  printf '%sPreviewing changes...%s\n\n' "$TUI_DIM" "$TUI_RESET"
+  output="$(tui_capture_file)"
+  tui_capture "$output" tui_plan_action || rc=$?
+  TUI_LAST_RC="$rc"
+  if ((rc != 0)); then
+    TUI_LAST_RESULT="Failed ($rc): Preview before build"
+    printf '\n%sPreview failed with exit code %s. Nothing was changed.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
+    tui_finish_output "$output" 'Preview before build'
+    return 0
+  fi
+  if tui_output_exceeds_screen "$output"; then
+    printf '\n%sThe plan is longer than this screen. Press any key to review it.%s' "$TUI_DIM" "$TUI_RESET"
+    IFS= read -rsn1 _ || true
+    tui_pager "$output" 'Plan before build'
+    tui_action_header 'Build selected demo'
+  fi
+  created=0 updated=0 adopted=0 unchanged=0 conflicts=0
+  if [[ -n "$output" && -r "$output" ]]; then
+    read -r created updated adopted unchanged conflicts < <(tui_plan_counts "$output") || true
+  fi
+  rm -f "$output"
+  mutations=$((created + updated + adopted))
+  printf '\n%sPlan: %s create, %s update, %s adopt, %s unchanged%s\n' \
+    "$TUI_BOLD" "$created" "$updated" "$adopted" "$unchanged" "$TUI_RESET"
+  if ((conflicts > 0)); then
+    printf '%s%s conflicting resource(s); build would stop.%s\n' "$TUI_DANGER" "$conflicts" "$TUI_RESET"
+  elif ((mutations == 0)); then
+    printf '%sNothing to create or update. Building only reapplies role and catalog access.%s\n' "$TUI_DIM" "$TUI_RESET"
+  fi
+  printf '\nBuild %s on %s?\n' "$TUI_DEMO_ID" "$(tui_crop "$MORPHEUS_URL" 60)"
+  printf '%sPress y to build, any other key to cancel.%s\n\n> ' "$TUI_DIM" "$TUI_RESET"
+  key="$(tui_read_key)"
+  if [[ "$key" != y ]]; then
+    TUI_LAST_RESULT='Build cancelled at the preview'
+    printf '\n%sCancelled. Nothing was changed.%s\n' "$TUI_WARNING" "$TUI_RESET"
+    tui_wait
+    return 0
+  fi
+  tui_run_action 'Build selected demo' tui_apply_action
+}
+
+# A destroy that stops on an ownership mismatch can be retried with force, which
+# still refuses any resource that carries no Leroy identity at all.
+tui_force_retry() {
+  local title="$1" typed
+  shift
+  ((TUI_LAST_RC == EXIT_CONFLICT)) || return 0
+  [[ "$TUI_LAST_FORCEABLE" == true ]] || return 0
+  tui_action_header "$title"
+  printf '%sA resource no longer matches the ownership marker Leroy recorded.%s\n\n' "$TUI_WARNING" "$TUI_RESET"
+  printf 'Forcing removes resources that still carry a Leroy identity but whose\n'
+  printf 'marker has changed. A resource with no Leroy identity is never removed.\n\n'
+  printf 'Type %sforce%s to continue, or anything else to stop:\n\n> ' "$TUI_BOLD" "$TUI_RESET"
+  printf '\033[?25h'
+  IFS= read -r typed || true
+  printf '\033[?25l'
+  if [[ "$typed" != force ]]; then
+    TUI_LAST_RESULT="Cancelled: $title"
+    printf '\n%sNothing further was changed.%s\n' "$TUI_WARNING" "$TUI_RESET"
+    tui_wait
+    return 0
+  fi
+  tui_run_action "$title (forced)" "$@"
+}
+
 tui_destroy_phrase() {
   if [[ -n "$TUI_STATE_FILE" && -r "$TUI_STATE_FILE" ]]; then
     jq -r '.manifest.metadata.name' "$TUI_STATE_FILE"
@@ -1520,7 +1783,9 @@ tui_confirm() {
 }
 
 tui_destroy_action() { demo_destroy "$TUI_DEMO_ID" true false; }
+tui_destroy_force_action() { demo_destroy "$TUI_DEMO_ID" true true; }
 tui_recreate_action() { demo_destroy "$TUI_DEMO_ID" true false && tui_sync_manifest && demo_apply; }
+tui_recreate_force_action() { demo_destroy "$TUI_DEMO_ID" true true && tui_sync_manifest && demo_apply; }
 
 # The wizard is interactive and refuses a non-terminal stdout, so it runs on its
 # own screen instead of through the captured action runner.
@@ -1537,9 +1802,7 @@ tui_wizard_screen() {
   elif [[ -z "$LAST_WIZARD_FILE" || ! -r "$LAST_WIZARD_FILE" ]]; then
     TUI_LAST_RESULT='Manifest was not saved'
   else
-    TUI_MANIFEST_FILE="$LAST_WIZARD_FILE"
-    TUI_MANIFEST_LABEL="${LAST_WIZARD_FILE##*/}"
-    TUI_FEATURES_JSON="$(manifest_features "$LAST_WIZARD_FILE" | jq -Sc .)"
+    tui_use_manifest_file "$LAST_WIZARD_FILE"
     if tui_sync_manifest; then
       TUI_LAST_RESULT="Manifest saved and activated: ${TUI_MANIFEST_LABEL}"
       printf '\n%sThe saved manifest is now the active TUI source (demo %s).%s\n' "$TUI_SUCCESS" "$TUI_DEMO_ID" "$TUI_RESET"
@@ -1604,7 +1867,7 @@ run_tui() {
         fi
         ;;
       2) tui_run_action 'Plan selected demo' tui_plan_action ;;
-      3) tui_run_action 'Build selected demo' tui_apply_action ;;
+      3) tui_build_screen ;;
       4)
         if tui_requires_state 'Verify demo structure'; then
           tui_run_action 'Verify demo structure' tui_verify_action
@@ -1619,12 +1882,14 @@ run_tui() {
         if tui_requires_state 'Recreate selected demo' &&
           tui_confirm 'Recreate selected demo' "$(tui_destroy_phrase)" "All Leroy-owned resources of ${TUI_DEMO_ID} will be deleted, then the current selection will be built."; then
           tui_run_action 'Recreate selected demo' tui_recreate_action
+          tui_force_retry 'Recreate selected demo' tui_recreate_force_action
         fi
         ;;
       7)
         if tui_requires_state 'Destroy selected demo' &&
           tui_confirm 'Destroy selected demo' "$(tui_destroy_phrase)" "All Leroy-owned resources of ${TUI_DEMO_ID} will be permanently deleted."; then
           tui_run_action 'Destroy selected demo' tui_destroy_action
+          tui_force_retry 'Destroy selected demo' tui_destroy_force_action
         fi
         ;;
       8) tui_select_components ;;
