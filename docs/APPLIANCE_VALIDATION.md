@@ -126,6 +126,27 @@ harness. What remains unverified is everything downstream of a real API call.
 | AV-087 | `w` wizard, then plan and apply from the generated manifest | The generated demo ID, tenant subdomain, and Cypher namespace are used throughout |
 | AV-088 | Long output paging during a real build | Scrolling reaches the end of the output without truncation |
 
+## Schema 2 and the graphical builder
+
+Schema 2 manifests exercise code paths that fixtures cannot settle, because
+what a persona may do is decided by Morpheus, not by Leroy.
+
+| ID | Behavior | Why local tests cannot settle it | Expected on an appliance |
+| --- | --- | --- | --- |
+| AV-100 | A schema 2 manifest applies end to end | Only payload construction is tested locally | `demo apply --file` on a builder manifest completes and verifies |
+| AV-101 | Per-persona permission rules from the manifest | Pattern matching runs against the permissions the real base role advertises | Each rule matches at least one permission; a rule that matches none fails with exit code 9 naming it |
+| AV-102 | Access levels other than `source` | Morpheus decides which levels a permission accepts (see LRY-004) | `read`, `full` and `user` are accepted, or the run fails with the API message |
+| AV-103 | A persona with a profile Morpheus does not know | Schema 2 allows any profile string; only `tenant-admin` is special to Leroy | The role is created with the base user role and the manifest's permissions |
+| AV-104 | More than three personas | Resource expansion is tested; creation is not | Every persona yields a role, a Cypher key and a user |
+| AV-105 | `catalogAccess: false` | Only the outbound calls are asserted locally | That persona's role has no catalog grant in the Morpheus UI |
+| AV-106 | `runsWorkflow` on a persona other than the operator | Execution is mocked locally | Deep verification executes the workflow as that persona |
+| AV-107 | Per-persona `verify.allow` and `verify.deny` | Real permissions decide the outcome | The allow path succeeds and the deny path is refused; a wrong expectation fails with exit code 9 |
+| AV-108 | A renamed tenant administrator persona | The tenant token depends on that persona's login | `ensure_tenant_token` logs in as it and tenant-scoped resources are created |
+
+The builder itself needs no appliance: it is static and makes no Morpheus
+calls. What an appliance run must confirm is that the manifests it produces
+apply cleanly, which is `AV-100` to `AV-108` above.
+
 ## Suggested run sheet
 
 Run in this order on an appliance that can be rebuilt. Steps 1 to 4 need no
@@ -146,6 +167,11 @@ leroy demo state                            # AV-077
 leroy demo verify                           # structural report
 leroy demo verify --deep                    # AV-060..AV-065
 leroy demo destroy --demo-id leroy-demo --yes  # AV-053, AV-074
+
+# then a schema 2 manifest from the builder, with a fourth persona
+leroy demo plan   --file banca-demo.json     # AV-100
+leroy demo apply  --file banca-demo.json     # AV-101..AV-105, AV-108
+leroy demo verify --file banca-demo.json --deep   # AV-106, AV-107
 # then rename one resource in the Morpheus UI, rebuild, and retry destroy for AV-073 and AV-078
 ```
 

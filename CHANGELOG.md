@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Component drift indicator for a selection that differs from the saved deployment.
 - Shared collection helper that follows Morpheus `max`/`offset` pagination.
 - `docs/APPLIANCE_VALIDATION.md`, listing every behavior that stays unverified until it runs against a Morpheus appliance.
+- Manifest schema version 2: personas are no longer fixed at three, and each one carries its own Morpheus permission rules, the access it must and must not have, whether it receives catalog access, and whether it runs the demonstration workflow. `leroy.sh` reads schema 1 and 2, and `demo preset --schema 2` emits the built-in demo in the new form.
+- Graphical manifest builder under `web/`, deployed to GitHub Pages: a canvas of draggable boxes wired by the dependencies Leroy applies, with demo scenarios for platform, banking, retail, telco and public sector, persona and permission editing, live validation against the same rules as `leroy.sh`, and manifest import and export.
+- `make web` serves the builder locally and `make web-manifests` prints each scenario's manifest.
 
 ### Changed
 
@@ -41,10 +44,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Resource totals are derived from the manifest, so a customized manifest is no longer reported with preset counts.
 - Destruction and recreation confirm with the organization name recorded in state, and are offered only when that state exists.
 - Unmapped terminal escape sequences no longer quit the dashboard or leak their trailing characters into the next keystroke.
+- Two uses of jq's alternative operator treated a stored `false` as absent: a persona excluded from catalog access was granted it anyway, and a workflow execution returning `success: false` passed deep verification instead of failing it.
 - The Leroy-identity check that guards `--force` evaluates its name test as written; it was piped through `tostring`, which hid every value from it, and it now takes the prefix from the manifest instead of assuming `leroy-`. Resources matching that prefix already counted as owned, so no resource becomes deletable that was not before unless the manifest sets no prefix.
 
 ### Security
 
+- The builder runs entirely in the browser: no server, no analytics, and no Morpheus calls. Manifests it produces carry no credentials, since Leroy generates demo passwords with Cypher at apply time.
 - Demo identifiers are validated before they are joined into a state path, so `--demo-id` cannot select or remove a file outside the state directory.
 - `demo list` and `demo state` expose resource identifiers only; generated passwords remain in Cypher and are never written to state.
 

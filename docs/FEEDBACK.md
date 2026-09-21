@@ -100,6 +100,18 @@ Found by reading the code and driving the TUI in a pseudo-terminal, not on an ap
 - **Expected:** Test the values of the resource, using the manifest's prefix.
 - **Status:** Resolved locally; appliance confirmation pending (`AV-078`). Resources matching the prefix already satisfied the ownership check, so the correction does not widen what force may delete unless a manifest sets no prefix.
 
+### LRY-016 — Permissions were not describable outside the script
+
+- **Observed:** The persona set was fixed at three and their Morpheus permission rules lived in `role_permissions()`, so no manifest could describe a different demonstration. A customer wanting a read-only auditor required a code change.
+- **Expected:** A manifest can define its own personas and their permission rules.
+- **Status:** Resolved locally as schema version 2; appliance confirmation pending (`AV-100` to `AV-108`).
+
+### LRY-017 — A stored false was read as absent
+
+- **Observed:** `(.catalogAccess // true)` and `(.success // true)` used jq's alternative operator, which treats `false` like `null`. A persona excluded from catalog access was granted it anyway, and a workflow execution returning `success: false` passed deep verification.
+- **Expected:** Compare against `false` directly.
+- **Status:** Resolved locally; appliance confirmation pending (`AV-064`, `AV-105`).
+
 ## Validation requested
 
 On the same appliance build:

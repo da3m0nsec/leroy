@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Constructor de demos Leroy</title>
+<meta name="description" content="Constructor gráfico de manifiestos para demostraciones de HPE Morpheus con Leroy.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#9635;</text></svg>">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand__mark" aria-hidden="true"></span>
+    <div>
+      <h1>Constructor de demos Leroy</h1>
+      <p>Diseña el manifiesto y aplícalo con <code>leroy demo apply --file</code></p>
+    </div>
+  </div>
+  <div class="topbar__actions">
+    <span class="badge">esquema 2</span>
+    <label class="button button--ghost">
+      Importar
+      <input type="file" id="import" accept="application/json,.json" hidden>
+    </label>
+    <button type="button" class="button button--ghost" id="copy">Copiar JSON</button>
+    <button type="button" class="button" id="download">Descargar manifiesto</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <section class="panel">
+      <h2>Escenario</h2>
+      <select id="scenario" aria-label="Escenario de demostración"></select>
+      <p class="hint" id="scenario-summary"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Identidad</h2>
+      <div id="identity"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Componentes</h2>
+      <p class="hint">Desactiva lo que el cliente no necesite. Las dependencias se mantienen solas.</p>
+      <div id="components" class="switches"></div>
+    </section>
+
+    <section class="panel panel--metrics">
+      <div><strong id="count">0</strong><span>recursos</span></div>
+      <div><strong id="persona-count">0</strong><span>personas</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Validación</h2>
+      <p class="status" id="status"></p>
+      <ul class="problems" id="problems"></ul>
+    </section>
+  </aside>
+
+  <section class="stage">
+    <div class="stage__bar">
+      <h2>Lienzo</h2>
+      <div class="stage__tools">
+        <button type="button" class="mini" id="add-persona">Añadir persona</button>
+        <button type="button" class="mini" id="relayout">Reordenar</button>
+        <span class="stage__hint">Arrastra las cajas, pulsa el interruptor para activarlas o desactivarlas</span>
+        <div class="zoom">
+          <button type="button" class="mini" id="zoom-out" aria-label="Alejar">&minus;</button>
+          <output id="zoom-level">100%</output>
+          <button type="button" class="mini" id="zoom-in" aria-label="Acercar">+</button>
+          <button type="button" class="mini" id="zoom-fit">Ajustar</button>
+        </div>
+      </div>
+    </div>
+    <div class="canvas" id="canvas">
+      <svg class="edges" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="nodes"></div>
+    </div>
+  </section>
+
+  <aside class="details">
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab is-active" data-tab="inspector" role="tab">Detalle</button>
+      <button type="button" class="tab" data-tab="preview" role="tab">Manifiesto</button>
+    </div>
+    <div class="tab-panel" data-panel="inspector">
+      <div id="inspector-body"></div>
+    </div>
+    <div class="tab-panel" data-panel="preview" hidden>
+      <p class="hint">Guárdalo y aplícalo con:</p>
+      <pre class="command" id="command"></pre>
+      <pre class="preview" id="preview"></pre>
+    </div>
+  </aside>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>

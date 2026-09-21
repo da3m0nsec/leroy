@@ -44,6 +44,8 @@ Run `make format` before submitting changes. Formatting should use the repositor
 
 Every behavior change should include or update a Bats test. Tests must not require a live Morpheus appliance. Mock `curl` responses and cover successful requests, error paths, malformed responses, configuration precedence, and safe handling of secrets and destructive-operation confirmation.
 
+The graphical builder in `web/` restates the manifest rules in JavaScript, because a static page cannot run bash. When you change `validate_manifest`, the feature-dependency rules or the resource expansion in `leroy.sh`, change `web/assets/schema.js` with them. `make check` runs every builder scenario through `validate_manifest` and compares both implementations' resource counts, so a divergence fails CI rather than reaching an operator.
+
 No test reaches a Morpheus appliance, so a passing suite does not prove that Morpheus accepts a request. When a change adds or alters an API interaction, add an entry to `docs/APPLIANCE_VALIDATION.md` describing what an operator with appliance access must check and what the expected result is.
 
 Live integration tests, when added, will be opt-in and must target a dedicated non-production tenant. Before opening a pull request, run:

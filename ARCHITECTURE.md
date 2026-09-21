@@ -48,7 +48,8 @@ Within `leroy.sh`, configuration functions run before either adapter, shared hel
 | `config/` | Sanitized configuration examples and future schema/default data. |
 | `tests/` | Bats unit and contract tests with mocked external commands. |
 | `docs/` | Focused operator and developer guides beyond top-level project documents. |
-| `.github/workflows/` | Automated syntax, lint, and test checks. |
+| `web/` | Static graphical manifest builder published to GitHub Pages. |
+| `.github/workflows/` | Automated syntax, lint, and test checks, and the Pages deployment. |
 
 ## Configuration and precedence
 
@@ -90,6 +91,40 @@ Select resource -> edit values -> validate -> show diff/preview -> confirm -> su
 ```
 
 The TUI detects a non-interactive terminal and fails clearly rather than waiting for unavailable input.
+
+## Manifest schema versions
+
+Schema 1 fixes the persona set: three personas with known keys and profiles,
+whose Morpheus permission rules and verification paths live in `leroy.sh`.
+Schema 2 moves that description into the manifest, so a manifest can define any
+number of personas and state, per persona, its permission rules, the access it
+must have, the access it must not have, whether it receives catalog access, and
+which persona executes the demonstration workflow.
+
+`validate_manifest` dispatches on `schemaVersion` and shares the identity and
+feature-dependency rules between the two validators. Every schema 2 lookup
+(`tenant_admin_key`, `catalog_persona_keys`, `workflow_persona`,
+`persona_permissions`) reduces to the schema 1 arrangement when the manifest
+states no preference, so one code path serves both versions and existing
+manifests and saved deployments are unaffected.
+
+A tenant administrator remains mandatory whenever persona roles are deployed,
+because the tenant token is obtained by logging in as that persona.
+
+## Graphical manifest builder
+
+`web/` holds a static, dependency-free builder that produces schema 2
+manifests, published to GitHub Pages. It shares no runtime with `leroy.sh`:
+the page cannot execute bash, so `web/assets/schema.js` restates the manifest
+rules in JavaScript. That duplication is deliberate and guarded rather than
+avoided. `web/tools/emit-manifests.mjs` runs the same modules the page loads
+outside the browser, and the test suite feeds every scenario through
+`validate_manifest` and compares both implementations' resource counts, so a
+rule that changes on one side and not the other fails CI.
+
+The canvas models resource groups as nodes wired by the dependencies Leroy
+applies, and node toggles map onto the same feature flags and dependency rules
+as the TUI component selector.
 
 ## Component selection and scope
 

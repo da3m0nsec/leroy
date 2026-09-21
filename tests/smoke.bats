@@ -619,3 +619,46 @@ load test_helper
   [ "${lines[1]}" = "pass" ]
   [ "${lines[2]}" = "pass" ]
 }
+
+@test "builder scenarios produce manifests Leroy accepts" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  local root="${PROJECT_ROOT}"
+  while read -r scenario; do
+    node "$root/web/tools/emit-manifests.mjs" "$scenario" >"$BATS_TEST_TMPDIR/$scenario.json"
+    run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR/$scenario.json"
+    [ "$status" -eq 0 ]
+    jq -e '.schemaVersion == 2' "$BATS_TEST_TMPDIR/$scenario.json"
+  done < <(node "$root/web/tools/emit-manifests.mjs")
+}
+
+@test "builder and Leroy agree on how many resources a manifest creates" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  local root="${PROJECT_ROOT}" expected actual
+  while read -r scenario; do
+    node "$root/web/tools/emit-manifests.mjs" "$scenario" >"$BATS_TEST_TMPDIR/$scenario.json"
+    expected="$(node "$root/web/tools/emit-manifests.mjs" "$scenario" count)"
+    actual="$(bash -c 'source "$1"; resource_count <"$2"' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR/$scenario.json")"
+    [ "$expected" = "$actual" ]
+  done < <(node "$root/web/tools/emit-manifests.mjs")
+}
+
+@test "builder feature toggles follow the same dependency rules as the TUI" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  run node --input-type=module -e '
+    import { applyFeatureDependencies, emptyFeatures } from "'"$PROJECT_ROOT"'/web/assets/schema.js";
+    const off = (features, key) => applyFeatureDependencies({ ...features, [key]: false }, key);
+    const on = (features, key) => applyFeatureDependencies({ ...features, [key]: true }, key);
+    const all = emptyFeatures(true);
+    const checks = [
+      off(all, "multitenancy").roles === false,
+      off(all, "groups").policies === false,
+      off(all, "automation").catalog === false,
+      on(off(all, "automation"), "catalog").automation === true,
+      on({ ...all, groups: false, policies: false }, "policies").groups === true,
+      on(off(all, "multitenancy"), "roles").multitenancy === true,
+    ];
+    console.log(checks.every(Boolean) ? "ok" : "mismatch");
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+}
