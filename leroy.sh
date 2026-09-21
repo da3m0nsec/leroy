@@ -176,16 +176,17 @@ api_request() {
 # the first page when the caller does not name it.
 api_collection() {
   local path="$1" key="${2:-}" token="${3:-$MASTER_TOKEN}"
-  local offset=0 page items count total merged='[]' separator='&'
+  local offset=0 page items count total source_key="$key" merged='[]' separator='&'
   local -r max=100 limit=10000
   [[ "$path" == *'?'* ]] || separator='?'
   while true; do
     page="$(api_request GET "${path}${separator}max=${max}&offset=${offset}" '' "$token")" || return
-    if [[ -z "$key" ]]; then
-      key="$(jq -r 'to_entries | map(select((.key != "meta") and (.value | type == "array"))) | .[0].key // empty' <<<"$page")"
-      [[ -n "$key" ]] || { printf '%s\n' "$page"; return 0; }
+    if [[ -z "$source_key" ]] || ! jq -e --arg key "$source_key" '(.[$key] // null) | type == "array"' <<<"$page" >/dev/null; then
+      source_key="$(jq -r 'to_entries | map(select((.key != "meta") and (.value | type == "array"))) | .[0].key // empty' <<<"$page")"
+      [[ -n "$source_key" ]] || { printf '%s\n' "$page"; return 0; }
+      [[ -n "$key" ]] || key="$source_key"
     fi
-    items="$(jq -c --arg key "$key" '.[$key] // []' <<<"$page")"
+    items="$(jq -c --arg key "$source_key" '.[$key] // []' <<<"$page")"
     count="$(jq 'length' <<<"$items")"
     merged="$(jq -nc --argjson merged "$merged" --argjson items "$items" '$merged + $items')"
     total="$(jq -r '.meta.total // empty' <<<"$page")"
@@ -998,7 +999,7 @@ status_command() {
 environments_list() {
   local response; response="$(api_collection '/api/environments' environments "$MASTER_TOKEN")" || return
   if [[ "$LEROY_OUTPUT" == json ]]; then printf '%s\n' "$response"
-  else jq -r '["ID","NAME","CODE","VISIBILITY"],(.environments[]?|[.id,.name,.code,(.visibility//"-")])|@tsv' <<<"$response"; fi
+  else jq -r '["ID","NAME","CODE","VISIBILITY"],(.environments[]?|[.id,.name,(.code//"-"),(.visibility//"-")])|@tsv' <<<"$response"; fi
 }
 
 environments_get() {

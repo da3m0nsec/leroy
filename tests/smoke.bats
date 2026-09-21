@@ -407,3 +407,14 @@ load test_helper
   [ "$status" -eq 2 ]
   [[ "$output" == *"invalid demo ID"* ]]
 }
+
+@test "collections recover when an endpoint wraps its array in another key" {
+  run bash -c '
+    source "$1"
+    MASTER_TOKEN=test
+    api_request() { jq -nc "{data:[{id:1,name:\"Dev\"}],meta:{total:1}}"; }
+    api_collection "/api/environments" environments
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  jq -e '(.environments | length) == 1 and .environments[0].id == 1' <<<"$output"
+}

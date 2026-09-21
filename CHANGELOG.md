@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Plans, applies, deep verification, and custom manifests now honor the selected deployment components.
 - Deployments without multitenancy place selected content in the Master Tenant.
 - Verification reports one row per check in table and JSON output instead of only a failure count.
-- Environment lists, role discovery, policy-type resolution, and name lookups read every page instead of the first 100 records.
+- Environment lists, role discovery, policy-type resolution, and name lookups read every page instead of the first 100 records, and normalize a collection wrapped under an unexpected key.
 
 ### Fixed
 

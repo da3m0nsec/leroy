@@ -38,7 +38,7 @@ containing secrets into either file.
 | ID | Behavior | Why local tests cannot settle it | Expected on an appliance |
 | --- | --- | --- | --- |
 | AV-010 | `api_collection` follows `max`/`offset` until a short page | Page shapes are synthetic | `leroy --output json environments list` returns every environment on an appliance with more than 100 |
-| AV-011 | Collection key auto-detection per endpoint | Real key names are assumed (`environments`, `roles`, `policyTypes`) | Roles, policy types, and name lookups all return records rather than an empty set |
+| AV-011 | Collection key handling per endpoint | Real key names are assumed (`environments`, `roles`, `policyTypes`); the helper falls back to the first array in the response and republishes it under the name the caller expects, which is itself untested against a real body | Roles, policy types, and name lookups all return records rather than an empty set |
 | AV-012 | Base role discovery no longer capped at one page | The appliance may expose more than 100 roles | Preflight finds the built-in Tenant Admin and user admin roles on a role-heavy appliance |
 
 ## Preflight and capability discovery
