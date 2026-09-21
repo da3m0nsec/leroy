@@ -398,3 +398,12 @@ load test_helper
   [ "${lines[0]}" = "unknown" ]
   [ "${lines[1]}" = "x" ]
 }
+
+@test "demo IDs cannot escape the state directory" {
+  run bash "$LEROY_BIN" demo destroy --demo-id '../outside' --yes
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid demo ID"* ]]
+  run bash "$LEROY_BIN" demo state --demo-id '../outside'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid demo ID"* ]]
+}

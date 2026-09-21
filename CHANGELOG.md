@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
+- Demo identifiers are validated before they are joined into a state path, so `--demo-id` cannot select or remove a file outside the state directory.
 - `demo list` and `demo state` expose resource identifiers only; generated passwords remain in Cypher and are never written to state.
 
 ## [0.2.0] - 2026-09-06

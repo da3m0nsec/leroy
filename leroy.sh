@@ -731,11 +731,11 @@ resource_delete() {
 demo_destroy() {
   local demo_id="$1" yes="$2" force="$3" entry state_name
   [[ "$yes" == true ]] || { die "$EXIT_USAGE" 'destroy requires --yes'; return; }
-  CURRENT_DEMO_ID="$demo_id"; STATE_FILE="${LEROY_STATE_DIR}/${demo_id}.json"
+  select_state "$demo_id" || return
   [[ -r "$STATE_FILE" ]] || { die "$EXIT_NOT_FOUND" "state not found for demo: $demo_id"; return; }
   state_assert_appliance || return
   CURRENT_MANIFEST="$(mktemp "${TMPDIR:-/tmp}/leroy-manifest.XXXXXX")"; jq -S '.manifest' "$STATE_FILE" >"$CURRENT_MANIFEST"
-  CURRENT_MARKER="Managed by Leroy demo:${demo_id}"; state_name="$(jq -r '.manifest.metadata.name' "$STATE_FILE")"
+  state_name="$(jq -r '.manifest.metadata.name' "$STATE_FILE")"
   [[ -n "$state_name" ]] || return "$EXIT_RESPONSE"
   preflight || return
   while IFS= read -r entry; do resource_delete "$entry" "$force" || return; done < <(jq -c '.resources | reverse[]' "$STATE_FILE")
