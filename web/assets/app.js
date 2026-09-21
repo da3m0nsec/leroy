@@ -486,6 +486,49 @@ function addPersona() {
   refresh();
 }
 
+// --- views -----------------------------------------------------------------
+// The landing page explains the tool; the builder is one click away and
+// deep-linkable at #constructor, so a link can open it directly.
+function showView(view, { push = true } = {}) {
+  document.body.dataset.view = view;
+  el('builder').hidden = view !== 'builder';
+  el('landing').hidden = view !== 'landing';
+  if (push) {
+    const hash = view === 'builder' ? '#constructor' : '#inicio';
+    if (window.location.hash !== hash) history.pushState({ view }, '', hash);
+  }
+  if (view === 'builder') {
+    // The canvas has no width while hidden, so it can only be fitted now.
+    canvas.fit();
+    refresh({ inspector: true });
+  }
+  window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+}
+
+function viewFromHash() {
+  return window.location.hash === '#constructor' ? 'builder' : 'landing';
+}
+
+function wireSnippets() {
+  for (const snippet of document.querySelectorAll('[data-copy]')) {
+    const code = snippet.querySelector('code');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'snippet__copy';
+    button.textContent = 'Copiar';
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(code.textContent);
+        button.textContent = 'Copiado';
+        setTimeout(() => { button.textContent = 'Copiar'; }, 1600);
+      } catch {
+        toast('El navegador no permitió copiar; selecciona el texto a mano');
+      }
+    });
+    snippet.querySelector('.snippet__head').append(button);
+  }
+}
+
 function init() {
   canvas = new Canvas(el('canvas'), {
     onSelect: (id) => { selected = id; refresh(); },
@@ -531,6 +574,18 @@ function init() {
     if (file) importFile(file);
     event.target.value = '';
   });
+  for (const button of document.querySelectorAll('[data-open-builder]')) {
+    button.addEventListener('click', () => showView('builder'));
+  }
+  for (const home of [el('home-link'), el('back-home')]) {
+    home.addEventListener('click', (event) => {
+      event.preventDefault();
+      showView('landing');
+    });
+  }
+  window.addEventListener('popstate', () => showView(viewFromHash(), { push: false }));
+  wireSnippets();
+
   for (const tab of document.querySelectorAll('.tab')) {
     tab.addEventListener('click', () => {
       for (const other of document.querySelectorAll('.tab')) other.classList.toggle('is-active', other === tab);
@@ -540,6 +595,7 @@ function init() {
     });
   }
   refresh();
+  showView(viewFromHash(), { push: false });
 }
 
 init();

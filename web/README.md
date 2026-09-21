@@ -8,6 +8,11 @@ leroy demo plan  --file mi-demo.json
 leroy demo apply --file mi-demo.json
 ```
 
+La página tiene dos vistas. La portada explica la herramienta, cómo funciona,
+qué despliega y cómo instalar la CLI, con órdenes copiables de `curl` y `wget`.
+El botón «Constructor de manifiestos» abre el lienzo, que también es accesible
+directamente en `#constructor`.
+
 ## Cómo se usa
 
 1. Elige un escenario de partida (plataforma, banca, retail, telco, sector público).
@@ -38,11 +43,11 @@ igual que el resto del proyecto se limita a bash, curl y jq.
 
 | Archivo | Responsabilidad |
 | --- | --- |
-| `index.html` | Estructura de la página. |
+| `index.html` | Portada y constructor, en una sola página con dos vistas. |
 | `assets/schema.js` | Modelo del manifiesto, reglas de dependencias y validación. |
 | `assets/scenarios.js` | Escenarios de demostración. |
 | `assets/graph.js` | Lienzo: cajas, aristas, arrastre y zoom. |
-| `assets/app.js` | Inspector, validación, vista previa e importación y exportación. |
+| `assets/app.js` | Vistas, inspector, validación, vista previa e importación y exportación. |
 | `tools/emit-manifests.mjs` | Ejecuta la lógica del constructor fuera del navegador, para las pruebas. |
 
 ## Por qué la validación está duplicada
@@ -58,3 +63,9 @@ recursos de ambas implementaciones, así que una divergencia rompe CI.
 `.github/workflows/pages.yml` publica este directorio en GitHub Pages en cada
 push a `main` que toque `web/`. Requiere que Pages esté configurado en el
 repositorio con origen «GitHub Actions».
+
+La portada ofrece la CLI desde
+`https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh`, es decir la
+rama por defecto. Cuando el proyecto publique versiones etiquetadas, conviene
+cambiar esa URL a una etiqueta para que la orden de instalación sea
+reproducible.

@@ -117,6 +117,13 @@ Inventory, verification, destruction, and recreation are only offered when a sav
 `web/` contiene un constructor gráfico que genera manifiestos sin escribir JSON
 a mano. Se despliega en GitHub Pages y se ejecuta en local con `make web`.
 
+Su portada explica la herramienta, describe los siete bloques que despliega y
+ofrece la orden de instalación de la CLI lista para copiar:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh -o leroy && chmod +x leroy
+```
+
 El lienzo dibuja la demostración como cajas conectadas por las dependencias que
 Leroy aplica realmente. Cada caja se arrastra y se activa o desactiva, lo que
 enciende o apaga el bloque correspondiente del manifiesto. Trae escenarios de

@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Shared collection helper that follows Morpheus `max`/`offset` pagination.
 - `docs/APPLIANCE_VALIDATION.md`, listing every behavior that stays unverified until it runs against a Morpheus appliance.
 - Manifest schema version 2: personas are no longer fixed at three, and each one carries its own Morpheus permission rules, the access it must and must not have, whether it receives catalog access, and whether it runs the demonstration workflow. `leroy.sh` reads schema 1 and 2, and `demo preset --schema 2` emits the built-in demo in the new form.
+- Landing page in front of the builder explaining the tool, how it works, the seven blocks it deploys and the security model, with copyable `curl` and `wget` commands that install the CLI. The builder opens from it and is deep-linkable at `#constructor`.
 - Graphical manifest builder under `web/`, deployed to GitHub Pages: a canvas of draggable boxes wired by the dependencies Leroy applies, with demo scenarios for platform, banking, retail, telco and public sector, persona and permission editing, live validation against the same rules as `leroy.sh`, and manifest import and export.
 - `make web` serves the builder locally and `make web-manifests` prints each scenario's manifest.
 
