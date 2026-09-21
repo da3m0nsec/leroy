@@ -252,6 +252,36 @@ preset_manifest() {
   }'
 }
 
+# Schema 2 equivalent of the built-in demo. The permission rules and the access
+# checks that schema 1 keeps inside this script become manifest data here, which
+# is what lets the builder edit them.
+preset_manifest_v2() {
+  preset_manifest | jq '
+    .schemaVersion = 2 |
+    .personas = [
+      (.personas[] | select(.key == "admin") + {
+        permissions: [],
+        verify: {allow: "/api/whoami"},
+        catalogAccess: true
+      }),
+      (.personas[] | select(.key == "operator") + {
+        permissions: [
+          {pattern: "provisioning.*instances|instances[[:space:]]*$|provisioning.*apps|provisioning.*tasks|tasks.*script engines|library", access: "source"},
+          {pattern: "infrastructure", access: "source"}
+        ],
+        verify: {allow: "/api/tasks?max=1"},
+        catalogAccess: true,
+        runsWorkflow: true
+      }),
+      (.personas[] | select(.key == "consumer") + {
+        permissions: [{pattern: "catalog|service catalog", access: "source"}],
+        verify: {allow: "/api/catalog-item-types?max=1", deny: "/api/tasks?max=1"},
+        catalogAccess: true
+      })
+    ]
+  '
+}
+
 feature_defaults() {
   jq -nc '{multitenancy:true,roles:true,environments:true,groups:true,policies:true,automation:true,catalog:true}'
 }
@@ -272,28 +302,104 @@ deployment_scope() {
   if feature_enabled multitenancy; then printf 'tenant'; else printf 'master'; fi
 }
 
-validate_manifest() {
-  local file="$1"
-  jq -e '
-    ({multitenancy:true,roles:true,environments:true,groups:true,policies:true,automation:true,catalog:true} * (.features // {})) as $features |
+# Feature-flag rules are identical in both schema versions. $features is a jq
+# variable bound by the caller, not a shell expansion.
+# shellcheck disable=SC2016
+FEATURE_RULES_JQ='
+  ([ $features[] ] | all(type == "boolean")) and
+  ($features.roles == $features.multitenancy) and
+  ($features.policies == false or $features.groups == true) and
+  ($features.catalog == false or $features.automation == true)
+'
+IDENTITY_RULES_JQ='
+  (.metadata.id | test("^[a-z][a-z0-9-]{2,40}$")) and
+  (.metadata.name | length > 0) and .metadata.language == "en" and
+  (.tenant.name | length > 0) and (.tenant.subdomain | test("^[a-z][a-z0-9-]+$")) and
+  (.environments | type == "array") and (.groups | type == "array") and
+  (.policies | type == "array") and (.automation | type == "object")
+'
+readonly FEATURE_RULES_JQ IDENTITY_RULES_JQ
+
+# Schema 1 fixes the persona set: three personas with known keys and profiles,
+# whose permissions and verification paths live in this script.
+validate_manifest_v1() {
+  jq -e --argjson defaults "$(feature_defaults)" "
+    (\$defaults * (.features // {})) as \$features |
     .schemaVersion == 1 and
-    (.metadata.id | test("^[a-z][a-z0-9-]{2,40}$")) and
-    (.metadata.name | length > 0) and .metadata.language == "en" and
-    (.tenant.name | length > 0) and (.tenant.subdomain | test("^[a-z][a-z0-9-]+$")) and
+    ${IDENTITY_RULES_JQ} and
     (.personas | length == 3) and
-    ([.personas[].key] | sort == ["admin","consumer","operator"]) and
-    ([.personas[].profile] | sort == ["platform-operator","service-consumer","tenant-admin"]) and
+    ([.personas[].key] | sort == [\"admin\",\"consumer\",\"operator\"]) and
+    ([.personas[].profile] | sort == [\"platform-operator\",\"service-consumer\",\"tenant-admin\"]) and
     ([.personas[].username] | unique | length == 3) and
-    (.environments | type == "array") and (.groups | type == "array") and
-    (.policies | type == "array") and (.automation | type == "object") and
-    ([ $features[] ] | all(type == "boolean")) and
-    ($features.roles == $features.multitenancy) and
-    ($features.policies == false or $features.groups == true) and
-    ($features.catalog == false or $features.automation == true)
-  ' "$file" >/dev/null || { die "$EXIT_USAGE" 'manifest is invalid or uses an unsupported schema'; return; }
+    ${FEATURE_RULES_JQ}
+  " "$1" >/dev/null
+}
+
+# Schema 2 lets the manifest carry its own personas, their Morpheus permission
+# rules, and the access each one must and must not have. A tenant administrator
+# is still required whenever persona roles are deployed, because the tenant
+# token is obtained by logging in as that persona.
+validate_manifest_v2() {
+  jq -e --argjson defaults "$(feature_defaults)" "
+    (\$defaults * (.features // {})) as \$features |
+    .schemaVersion == 2 and
+    ${IDENTITY_RULES_JQ} and
+    (.personas | type == \"array\") and (.personas | length >= 1) and
+    all(.personas[];
+      (.key | type) == \"string\" and (.key | test(\"^[a-z][a-z0-9-]{0,30}\$\")) and
+      (.role | type) == \"string\" and (.role | length) > 0 and
+      (.username | type) == \"string\" and (.username | length) > 0 and
+      (.email | type) == \"string\" and (.email | length) > 0 and
+      (.profile | type) == \"string\" and (.profile | length) > 0) and
+    ([.personas[].key] | unique | length) == (.personas | length) and
+    ([.personas[].username] | unique | length) == (.personas | length) and
+    (\$features.roles == false or ([.personas[] | select(.profile == \"tenant-admin\")] | length) == 1) and
+    ([.personas[] | select(.runsWorkflow == true)] | length) <= 1 and
+    all(.personas[] | (.permissions // [])[];
+      (.pattern | type) == \"string\" and (.pattern | length) > 0 and
+      (.access | type) == \"string\" and (.access | length) > 0) and
+    all(.personas[] | select(has(\"verify\")) | .verify;
+      (.allow | type) == \"string\" and (.allow | startswith(\"/api/\")) and
+      ((.deny // \"\") | type) == \"string\") and
+    ${FEATURE_RULES_JQ}
+  " "$1" >/dev/null
+}
+
+validate_manifest() {
+  local file="$1" version
+  version="$(jq -r '.schemaVersion // empty' "$file" 2>/dev/null || true)"
+  case "$version" in
+    1) validate_manifest_v1 "$file" || { die "$EXIT_USAGE" 'manifest is invalid for schema version 1'; return; } ;;
+    2) validate_manifest_v2 "$file" || { die "$EXIT_USAGE" 'manifest is invalid for schema version 2'; return; } ;;
+    *) die "$EXIT_USAGE" 'manifest is invalid or uses an unsupported schema'; return ;;
+  esac
   if jq -e '[.. | objects | keys[]] | any(. == "password" or . == "token" or . == "access_token")' "$file" >/dev/null; then
     die "$EXIT_USAGE" 'manifest must not contain passwords or tokens'; return
   fi
+}
+
+# Persona lookups. Every one of these reduces to the schema 1 arrangement when
+# the manifest does not state a preference, so v1 deployments are unaffected.
+persona_permissions() {
+  jq -c --arg key "$1" '[.personas[] | select(.key == $key) | .permissions // []] | first // []' "$CURRENT_MANIFEST" 2>/dev/null || printf '[]\n'
+}
+
+tenant_admin_key() {
+  jq -r '([.personas[] | select(.profile == "tenant-admin")][0].key) // "admin"' "$CURRENT_MANIFEST" 2>/dev/null || printf 'admin\n'
+}
+
+catalog_persona_keys() {
+  jq -r '.personas[] | select(.catalogAccess != false) | .key' "$CURRENT_MANIFEST" 2>/dev/null || true
+}
+
+# The persona that executes the demonstration workflow: whichever one asks for
+# it, else the operator that schema 1 always defines.
+workflow_persona() {
+  jq -c '
+    ([.personas[] | select(.runsWorkflow == true)] +
+     [.personas[] | select(.key == "operator")] +
+     [.personas[] | select(.profile == "platform-operator")])[0] // empty
+  ' "$CURRENT_MANIFEST" 2>/dev/null || true
 }
 
 manifest_to_temp() {
@@ -490,8 +596,11 @@ role_permissions() {
 }
 
 configure_role_permissions() {
-  local profile="$1" role_id="$2" rules available rule pattern access matches permission code effective_access
-  rules="$(role_permissions "$profile")"; [[ "$(jq 'length' <<<"$rules")" -gt 0 ]] || return 0
+  local profile="$1" role_id="$2" persona="${3:-}" rules available rule pattern access matches permission code effective_access
+  rules='[]'
+  [[ -z "$persona" ]] || rules="$(persona_permissions "$persona")"
+  [[ "$(jq 'length' <<<"$rules")" -gt 0 ]] || rules="$(role_permissions "$profile")"
+  [[ "$(jq 'length' <<<"$rules")" -gt 0 ]] || return 0
   available="$(api_request GET "/api/roles/${BASE_USER_ROLE_ID}?includeDefaultAccess=true" '' "$MASTER_TOKEN")" || return
   while IFS= read -r rule; do
     pattern="$(jq -r '.pattern' <<<"$rule")"; access="$(jq -r '.access' <<<"$rule")"
@@ -508,11 +617,12 @@ configure_role_permissions() {
 configure_catalog_access() {
   local catalog_id="$1" role_key role_id
   feature_enabled roles || return 0
-  for role_key in admin operator consumer; do
+  while IFS= read -r role_key; do
+    [[ -n "$role_key" ]] || continue
     role_id="$(resource_id "role:${role_key}")"
     [[ -n "$role_id" ]] || { die "$EXIT_PARTIAL" "catalog access role is not ready: $role_key"; return; }
     api_request PUT "/api/roles/${role_id}/update-catalog-item-type" "$(jq -nc --argjson id "$catalog_id" '{catalogItemTypeId:$id,access:"full"}')" "$MASTER_TOKEN" >/dev/null || return
-  done
+  done < <(catalog_persona_keys)
 }
 
 resolve_policy_type() {
@@ -597,11 +707,12 @@ extract_id() {
 
 ensure_tenant_token() {
   [[ -z "$TENANT_TOKEN" ]] || return 0
-  local cypher_path password username subdomain login tokens
-  cypher_path="$(resource_id 'cypher:admin')"; TENANT_ADMIN_USER_ID="$(resource_id 'user:admin')"
+  local cypher_path password username subdomain login tokens admin_key
+  admin_key="$(tenant_admin_key)"
+  cypher_path="$(resource_id "cypher:${admin_key}")"; TENANT_ADMIN_USER_ID="$(resource_id "user:${admin_key}")"
   [[ -n "$cypher_path" && -n "$TENANT_ADMIN_USER_ID" ]] || { die "$EXIT_PARTIAL" 'tenant administrator is not ready; rerun apply'; return; }
   password="$(api_request GET "/api/cypher/${cypher_path}" '' "$MASTER_TOKEN" | jq -r '.data // .cypher.data // empty')"
-  username="$(jq -r '.personas[] | select(.key=="admin") | .username' "$CURRENT_MANIFEST")"
+  username="$(jq -r --arg key "$admin_key" '.personas[] | select(.key == $key) | .username' "$CURRENT_MANIFEST")"
   subdomain="$(jq -r '.tenant.subdomain' "$CURRENT_MANIFEST")"
   login="$(oauth_login "${subdomain}\\${username}" "$password")" || return
   TENANT_TOKEN="$(jq -r '.access_token' <<<"$login")"
@@ -668,7 +779,7 @@ apply_one() {
       saved="$(state_resource "$key")"
       if [[ "$type" == role || "$type" == catalog ]] && [[ "$(jq -r '.configured // false' <<<"$saved")" != true ]]; then
         id="$(jq -r '.id' <<<"$saved")"
-        if [[ "$type" == role ]]; then configure_role_permissions "$(jq -r '.spec.profile' <<<"$spec")" "$id" || return; fi
+        if [[ "$type" == role ]]; then configure_role_permissions "$(jq -r '.spec.profile' <<<"$spec")" "$id" "$(jq -r '.key | sub("^role:"; "")' <<<"$spec")" || return; fi
         if [[ "$type" == catalog ]]; then configure_catalog_access "$id" || return; fi
         state_record "$(jq '.configured=true' <<<"$saved")"
       fi
@@ -694,7 +805,7 @@ apply_one() {
   fi
   entry="$(jq -nc --arg key "$key" --arg type "$type" --arg scope "$scope" --arg name "$name" --arg id "$id" --arg marker "$CURRENT_MARKER" --argjson logical "$(jq -c '.spec' <<<"$spec")" '{key:$key,type:$type,scope:$scope,name:$name,id:$id,marker:$marker,spec:$logical}')"
   state_record "$entry"
-  if [[ "$type" == role ]]; then configure_role_permissions "$(jq -r '.spec.profile' <<<"$spec")" "$id" || return; fi
+  if [[ "$type" == role ]]; then configure_role_permissions "$(jq -r '.spec.profile' <<<"$spec")" "$id" "$(jq -r '.key | sub("^role:"; "")' <<<"$spec")" || return; fi
   if [[ "$type" == catalog ]]; then configure_catalog_access "$id" || return; fi
   if [[ "$type" == role || "$type" == catalog ]]; then state_record "$(jq '.configured=true' <<<"$entry")"; fi
   log_info "$action $type: $name"
@@ -801,7 +912,7 @@ emit_verify_report() {
 }
 
 verify_persona() {
-  local persona="$1" key username subdomain cypher_path password login token token_id user_id allowed_path
+  local persona="$1" key username subdomain cypher_path password login token token_id user_id allowed_path denied_path=''
   key="$(jq -r '.key' <<<"$persona")"; username="$(jq -r '.username' <<<"$persona")"; subdomain="$(jq -r '.tenant.subdomain' "$CURRENT_MANIFEST")"
   cypher_path="$(resource_id "cypher:${key}")"; user_id="$(resource_id "user:${key}")"
   password="$(api_request GET "/api/cypher/${cypher_path}" '' "$MASTER_TOKEN" 2>/dev/null | jq -r '.data // .cypher.data // empty' || true)"
@@ -813,15 +924,20 @@ verify_persona() {
   TEMP_TOKEN_USERS+=("$user_id"); TEMP_TOKEN_IDS+=("$token_id")
   [[ -n "$token_id" ]] || token_id="$(find_token_id "$user_id")"
   TEMP_TOKEN_IDS[${#TEMP_TOKEN_IDS[@]} - 1]="$token_id"
-  case "$key" in
-    admin) allowed_path='/api/whoami' ;;
-    operator) allowed_path='/api/tasks?max=1' ;;
-    consumer) allowed_path='/api/catalog-item-types?max=1' ;;
-  esac
+  if jq -e 'has("verify")' <<<"$persona" >/dev/null 2>&1; then
+    allowed_path="$(jq -r '.verify.allow // "/api/whoami"' <<<"$persona")"
+    denied_path="$(jq -r '.verify.deny // empty' <<<"$persona")"
+  else
+    case "$key" in
+      operator) allowed_path='/api/tasks?max=1' ;;
+      consumer) allowed_path='/api/catalog-item-types?max=1'; denied_path='/api/tasks?max=1' ;;
+      *) allowed_path='/api/whoami' ;;
+    esac
+  fi
   if ! api_request GET "$allowed_path" '' "$token" >/dev/null 2>&1; then
     verify_record persona "$username" fail "expected access was denied: $allowed_path"
-  elif [[ "$key" == consumer ]] && api_request GET '/api/tasks?max=1' '' "$token" >/dev/null 2>&1; then
-    verify_record persona "$username" fail 'service consumer unexpectedly has task administration access'
+  elif [[ -n "$denied_path" ]] && api_request GET "$denied_path" '' "$token" >/dev/null 2>&1; then
+    verify_record persona "$username" fail "access that must be denied is allowed: $denied_path"
   else
     verify_record persona "$username" pass "$allowed_path"
   fi
@@ -861,7 +977,10 @@ demo_verify() {
       execution_token="$MASTER_TOKEN"
       workflow_code="$(jq -r '.automation.workflows[0].code' "$CURRENT_MANIFEST")"
       if feature_enabled roles; then
-        operator="$(jq -c '.personas[] | select(.key=="operator")' "$CURRENT_MANIFEST")"
+        operator="$(workflow_persona)"
+        if [[ -z "$operator" ]]; then
+          op_login="skipped"
+        else
         op_key="$(jq -r '.key' <<<"$operator")"; op_path="$(resource_id "cypher:${op_key}")"; op_user="$(resource_id "user:${op_key}")"
         op_password="$(api_request GET "/api/cypher/${op_path}" '' "$MASTER_TOKEN" 2>/dev/null | jq -r '.data // .cypher.data // empty' || true)"
         if ! op_login="$(oauth_login "$(jq -r '.tenant.subdomain' "$CURRENT_MANIFEST")\\$(jq -r '.username' <<<"$operator")" "$op_password" 2>/dev/null)"; then
@@ -871,13 +990,14 @@ demo_verify() {
           execution_token="$(jq -r '.access_token' <<<"$op_login")"; op_token_id="$(jq -r '.id // .token.id // empty' <<<"$op_login")"; [[ -n "$op_token_id" ]] || op_token_id="$(find_token_id "$op_user")"
           TEMP_TOKEN_USERS+=("$op_user"); TEMP_TOKEN_IDS+=("$op_token_id")
         fi
+        fi
       else
         op_login="skipped"
       fi
       if [[ -n "$op_login" ]]; then
         workflow_id="$(resource_id "workflow:${workflow_code}")"
         result="$(api_request POST "/api/task-sets/${workflow_id}/execute" '{"job":{"customOptions":{"demoMessage":"Verified by Leroy"}}}' "$execution_token" 2>/dev/null || true)"
-        if jq -e '(.success // true) != false' <<<"${result:-null}" >/dev/null 2>&1; then
+        if jq -e '.success != false' <<<"${result:-null}" >/dev/null 2>&1; then
           verify_record workflow "$workflow_code" pass 'executed as the operator persona'
         else
           verify_record workflow "$workflow_code" fail 'workflow execution was rejected'
@@ -1904,7 +2024,7 @@ usage() {
 Usage:
   leroy.sh [global options] [tui|status]
   leroy.sh [global options] environments {list|get ID}
-  leroy.sh demo preset
+  leroy.sh demo preset [--schema 1|2]
   leroy.sh demo wizard
   leroy.sh [global options] demo list
   leroy.sh [global options] demo state [--demo-id ID] [--file FILE]
@@ -1920,7 +2040,7 @@ EOF
 
 main() {
   local config_file="" output_override="" command="" action="" manifest_file="" demo_id="leroy-demo"
-  local yes=false force=false deep=false demo_id_set=false saved_manifest
+  local yes=false force=false deep=false demo_id_set=false saved_manifest schema=1
   while (($#)); do
     case "$1" in
       --config) (($# >= 2)) || return "$EXIT_USAGE"; config_file="$2"; shift 2 ;;
@@ -1941,11 +2061,20 @@ main() {
         --yes) yes=true; shift ;;
         --force) force=true; shift ;;
         --deep) deep=true; shift ;;
+        --schema) (($# >= 2)) || { die "$EXIT_USAGE" '--schema requires a value'; return; }; schema="$2"; shift 2 ;;
         *) die "$EXIT_USAGE" "unknown demo option: $1"; return ;;
       esac
     done
     case "$action" in
-      preset) require_command jq; preset_manifest | jq -S .; return ;;
+      preset)
+        require_command jq || return
+        case "$schema" in
+          1) preset_manifest | jq -S . ;;
+          2) preset_manifest_v2 | jq -S . ;;
+          *) die "$EXIT_USAGE" 'schema must be 1 or 2'; return ;;
+        esac
+        return
+        ;;
       wizard) require_command jq; wizard_manifest; return ;;
     esac
   fi
