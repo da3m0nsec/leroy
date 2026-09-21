@@ -4,8 +4,8 @@
 // builder cannot drift away from what leroy.sh accepts without CI noticing.
 //
 //   node web/tools/emit-manifests.mjs            # every scenario id
-//   node web/tools/emit-manifests.mjs banca      # one manifest as JSON
-//   node web/tools/emit-manifests.mjs banca count
+//   node web/tools/emit-manifests.mjs banking    # one manifest as JSON
+//   node web/tools/emit-manifests.mjs banking count
 
 import { buildManifest, resourceCount } from '../assets/schema.js';
 import { SCENARIOS, scenarioById } from '../assets/scenarios.js';

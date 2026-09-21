@@ -1,266 +1,268 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leroy · Constructor de demos para HPE Morpheus</title>
-<meta name="description" content="Diseña una demostración de HPE Morpheus en un lienzo gráfico, descarga el manifiesto y aplícalo con la CLI de Leroy.">
+<title>Leroy · Demo builder for HPE Morpheus</title>
+<meta name="description" content="Design an HPE Morpheus demonstration on a graphical canvas, download the manifest and apply it with the Leroy CLI.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#9635;</text></svg>">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body data-view="landing">
 <header class="topbar">
-  <a class="brand" href="#inicio" id="home-link">
+  <a class="brand" href="#top" id="home-link">
     <span class="brand__mark" aria-hidden="true"></span>
     <div>
       <h1>Leroy</h1>
-      <p>Demostraciones de HPE Morpheus</p>
+      <p>HPE Morpheus demonstrations</p>
     </div>
   </a>
   <nav class="topbar__actions">
-    <a class="button button--ghost only-landing" href="https://github.com/da3m0nsec/leroy" target="_blank" rel="noopener noreferrer">Repositorio</a>
-    <button type="button" class="button only-landing" data-open-builder>Constructor de manifiestos</button>
+    <a class="button button--ghost only-landing" href="https://github.com/da3m0nsec/leroy" target="_blank" rel="noopener noreferrer">Repository</a>
+    <button type="button" class="button only-landing" data-open-builder>Manifest builder</button>
 
-    <button type="button" class="button button--ghost only-builder" id="back-home">Inicio</button>
-    <span class="badge only-builder">esquema 2</span>
+    <button type="button" class="button button--ghost only-builder" id="back-home">Home</button>
+    <span class="badge only-builder">schema 2</span>
     <label class="button button--ghost only-builder">
-      Importar
+      Import
       <input type="file" id="import" accept="application/json,.json" hidden>
     </label>
-    <button type="button" class="button button--ghost only-builder" id="copy">Copiar JSON</button>
-    <button type="button" class="button only-builder" id="download">Descargar manifiesto</button>
+    <button type="button" class="button button--ghost only-builder" id="copy">Copy JSON</button>
+    <button type="button" class="button only-builder" id="download">Download manifest</button>
   </nav>
 </header>
 
-<!-- ------------------------------ portada ------------------------------ -->
+<!-- ------------------------------ landing ------------------------------ -->
 <main class="landing only-landing" id="landing">
-  <section class="hero" id="inicio">
-    <p class="eyebrow">Herramienta de demostración</p>
-    <h2>Monta una demostración completa de Morpheus sin escribir JSON</h2>
+  <section class="hero" id="top">
+    <p class="eyebrow">Demonstration tooling</p>
+    <h2>Build a complete Morpheus demonstration without writing JSON</h2>
     <p class="lead">
-      Leroy construye un tenant de demostración en un appliance HPE Morpheus 9 vacío:
-      organización, roles y personas, entornos, grupos, políticas, automatización y
-      catálogo de autoservicio. Todo sin necesitar una nube conectada.
-      Diseña aquí lo que quieres enseñar, descarga el manifiesto y aplícalo con una
-      sola orden. Cuando termines la demostración, Leroy borra exactamente lo que creó.
+      Leroy builds a demonstration tenant on an empty HPE Morpheus 9 appliance:
+      the organization, roles and personas, environments, groups, policies,
+      automation and a self-service catalog. No cloud integration required.
+      Design what you want to show here, download the manifest and apply it with
+      a single command. When the demonstration is over, Leroy removes exactly
+      what it created.
     </p>
     <div class="hero__cta">
-      <button type="button" class="button button--lg" data-open-builder>Abrir el constructor de manifiestos</button>
-      <a class="button button--ghost button--lg" href="#instalar">Instalar la CLI</a>
+      <button type="button" class="button button--lg" data-open-builder>Open the manifest builder</button>
+      <a class="button button--ghost button--lg" href="#install">Install the CLI</a>
     </div>
     <ul class="facts">
-      <li><strong>24</strong><span>recursos en la demo estándar</span></li>
-      <li><strong>7</strong><span>bloques que activas o desactivas</span></li>
-      <li><strong>3</strong><span>dependencias: bash, curl y jq</span></li>
+      <li><strong>24</strong><span>resources in the standard demo</span></li>
+      <li><strong>7</strong><span>blocks you switch on and off</span></li>
+      <li><strong>3</strong><span>dependencies: bash, curl and jq</span></li>
     </ul>
   </section>
 
-  <section class="section" id="como">
-    <h3>Cómo funciona</h3>
-    <p class="section__lead">Cuatro pasos, de la pantalla al appliance.</p>
+  <section class="section" id="how">
+    <h3>How it works</h3>
+    <p class="section__lead">Four steps, from this screen to the appliance.</p>
     <ol class="steps">
       <li>
         <span class="steps__num">1</span>
         <div>
-          <h4>Elige un escenario</h4>
-          <p>Plataforma estándar, banca regulada, retail multimarca, telco y borde, o sector
-            público. Cada uno rellena la demostración entera; a partir de ahí ajustas lo que quieras.</p>
+          <h4>Pick a scenario</h4>
+          <p>Standard platform, regulated banking, multi-brand retail, telco and edge,
+            or public sector. Each one fills in a whole demonstration; from there you
+            adjust whatever you want.</p>
         </div>
       </li>
       <li>
         <span class="steps__num">2</span>
         <div>
-          <h4>Diseña en el lienzo</h4>
-          <p>Cada caja es un bloque de recursos de Morpheus y las líneas son las dependencias
-            reales: el rol de tenant antes del tenant, los usuarios dentro de él, las políticas
-            sobre los grupos, y la entrada y la tarea dentro del flujo que expone el catálogo.
-            Arrastra las cajas, desactiva lo que el cliente no necesite y edita personas,
-            permisos, entornos, grupos, políticas y automatización.</p>
+          <h4>Design it on the canvas</h4>
+          <p>Every box is a block of Morpheus resources and the lines are the real
+            dependencies: the tenant role before the tenant, the users inside it, the
+            policies over the groups, and the input and the task inside the workflow the
+            catalog exposes. Drag the boxes, switch off whatever the customer does not
+            need, and edit personas, permissions, environments, groups, policies and
+            automation.</p>
         </div>
       </li>
       <li>
         <span class="steps__num">3</span>
         <div>
-          <h4>Descarga el manifiesto</h4>
-          <p>Un JSON de esquema 2, validado contra las mismas reglas que aplica la CLI. Nunca
-            contiene contraseñas ni tokens, así que puedes guardarlo en el repositorio del
-            cliente o enviarlo por correo sin riesgo.</p>
+          <h4>Download the manifest</h4>
+          <p>A schema 2 JSON document, validated against the same rules the CLI applies.
+            It never contains passwords or tokens, so you can keep it in the customer's
+            repository or send it by email without risk.</p>
         </div>
       </li>
       <li>
         <span class="steps__num">4</span>
         <div>
-          <h4>Aplícalo con la CLI</h4>
-          <p><code>plan</code> enseña lo que va a pasar sin tocar nada, <code>apply</code> lo
-            construye y se puede reanudar si se interrumpe, <code>verify --deep</code> inicia
-            sesión como cada persona para comprobar permisos y ejecuta el flujo, y
-            <code>destroy</code> borra solo lo que Leroy creó.</p>
+          <h4>Apply it with the CLI</h4>
+          <p><code>plan</code> shows what will happen without touching anything,
+            <code>apply</code> builds it and can be resumed if interrupted,
+            <code>verify --deep</code> logs in as each persona to check permissions and
+            runs the workflow, and <code>destroy</code> removes only what Leroy created.</p>
         </div>
       </li>
     </ol>
   </section>
 
-  <section class="section" id="instalar">
-    <h3>Instala la CLI</h3>
+  <section class="section" id="install">
+    <h3>Install the CLI</h3>
     <p class="section__lead">
-      Un único script de bash. Sin instalador, sin paquetes y sin permisos de administrador.
+      A single bash script. No installer, no packages and no administrator rights.
     </p>
 
     <div class="snippet" data-copy>
-      <div class="snippet__head"><span>Descargar con curl</span></div>
+      <div class="snippet__head"><span>Download with curl</span></div>
       <pre><code>curl -fsSL https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh -o leroy &amp;&amp; chmod +x leroy</code></pre>
     </div>
 
     <div class="snippet" data-copy>
-      <div class="snippet__head"><span>O con wget</span></div>
+      <div class="snippet__head"><span>Or with wget</span></div>
       <pre><code>wget -qO leroy https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh &amp;&amp; chmod +x leroy</code></pre>
     </div>
 
     <div class="snippet" data-copy>
-      <div class="snippet__head"><span>Conecta con el appliance</span></div>
+      <div class="snippet__head"><span>Connect to the appliance</span></div>
       <pre><code>export MORPHEUS_URL="https://morpheus.example.com"
-export MORPHEUS_API_TOKEN="tu-token-de-administrador"
+export MORPHEUS_API_TOKEN="your-administrator-token"
 ./leroy status</code></pre>
     </div>
 
     <div class="snippet" data-copy>
-      <div class="snippet__head"><span>Aplica el manifiesto que has diseñado</span></div>
-      <pre><code>./leroy demo plan   --file mi-demo.json
-./leroy demo apply  --file mi-demo.json
-./leroy demo verify --file mi-demo.json --deep</code></pre>
+      <div class="snippet__head"><span>Apply the manifest you designed</span></div>
+      <pre><code>./leroy demo plan   --file my-demo.json
+./leroy demo apply  --file my-demo.json
+./leroy demo verify --file my-demo.json --deep</code></pre>
     </div>
 
     <div class="callout">
-      <h4>Requisitos</h4>
+      <h4>Requirements</h4>
       <ul>
-        <li>Bash 4.4 o posterior, <code>curl</code> y <code>jq</code>.</li>
-        <li>Un appliance HPE Morpheus 9 y un token de administrador del Master Tenant.</li>
-        <li>El token se lee de <code>MORPHEUS_API_TOKEN</code> y nunca se pasa como argumento,
-          porque los argumentos de un proceso son visibles para otros usuarios.</li>
-        <li>La verificación TLS viene desactivada para appliances con certificado interno.
-          Pon <code>MORPHEUS_VERIFY_TLS=true</code> cuando el certificado sea de confianza.</li>
+        <li>Bash 4.4 or newer, <code>curl</code> and <code>jq</code>.</li>
+        <li>An HPE Morpheus 9 appliance and a Master Tenant administrator token.</li>
+        <li>The token is read from <code>MORPHEUS_API_TOKEN</code> and is never passed as an
+          argument, because process arguments are visible to other users.</li>
+        <li>TLS verification is off by default for appliances with internal certificates.
+          Set <code>MORPHEUS_VERIFY_TLS=true</code> when the certificate is trusted.</li>
       </ul>
     </div>
 
     <p class="section__lead">
-      Ejecuta <code>./leroy</code> sin argumentos para abrir la interfaz de terminal, con
-      panel de estado, selección de componentes, previsualización antes de construir y
-      destrucción protegida.
+      Run <code>./leroy</code> with no arguments to open the terminal interface, with a
+      status dashboard, component selection, a preview before building, and protected
+      destruction.
     </p>
   </section>
 
-  <section class="section" id="bloques">
-    <h3>Qué despliega</h3>
+  <section class="section" id="blocks">
+    <h3>What it deploys</h3>
     <p class="section__lead">
-      Siete bloques que enciendes o apagas por separado. Las dependencias se mantienen
-      solas: las políticas necesitan grupos, el catálogo necesita automatización, y los
-      roles de persona viajan con el tenant.
+      Seven blocks you switch on and off independently. Dependencies hold themselves:
+      policies need groups, the catalog needs automation, and persona roles travel with
+      the tenant.
     </p>
     <div class="cards">
       <article class="card-block card-block--rbac">
         <h4>Multitenancy</h4>
-        <p>Una organización de demostración propia con su rol de cuenta. Si lo desactivas,
-          el resto del contenido se crea en el Master Tenant.</p>
+        <p>A demonstration organization of its own with its account role. Switch it off
+          and the rest of the content is created in the Master Tenant.</p>
       </article>
       <article class="card-block card-block--persona">
-        <h4>Roles y usuarios</h4>
-        <p>Las personas de la demostración. Cada una genera un rol, una contraseña
-          guardada en Cypher y un usuario, con los permisos que tú le definas.</p>
+        <h4>Roles and users</h4>
+        <p>The personas of the demonstration. Each one produces a role, a password held
+          in Cypher and a user, with the permissions you define for it.</p>
       </article>
       <article class="card-block card-block--infra">
-        <h4>Entornos</h4>
-        <p>Etiquetas de entorno como desarrollo, preproducción y producción, que se usan
-          al aprovisionar instancias y aplicaciones.</p>
+        <h4>Environments</h4>
+        <p>Environment labels such as development, staging and production, used when
+          provisioning instances and applications.</p>
       </article>
       <article class="card-block card-block--infra">
-        <h4>Grupos</h4>
-        <p>Grupos de infraestructura sobre los que aplicar gobierno, sin necesidad de
-          tener una nube integrada.</p>
+        <h4>Groups</h4>
+        <p>Infrastructure groups to govern, with no need for an integrated cloud.</p>
       </article>
       <article class="card-block card-block--infra">
-        <h4>Políticas</h4>
-        <p>Mensaje del día, nomenclatura de instancias, caducidad y acceso a Cypher,
-          aplicadas al tenant o solo a los grupos.</p>
+        <h4>Policies</h4>
+        <p>Message of the day, instance naming, expiration and Cypher access, applied to
+          the tenant or only to the groups.</p>
       </article>
       <article class="card-block card-block--automation">
-        <h4>Automatización</h4>
-        <p>Una entrada, una tarea Groovy local y un flujo operativo que se ejecutan en el
-          propio appliance.</p>
+        <h4>Automation</h4>
+        <p>An input, a local Groovy task and an operational workflow that run on the
+          appliance itself.</p>
       </article>
       <article class="card-block card-block--catalog">
-        <h4>Catálogo</h4>
-        <p>Un elemento de autoservicio respaldado por ese flujo, concedido a las personas
-          que elijas.</p>
+        <h4>Catalog</h4>
+        <p>A self-service item backed by that workflow, granted to the personas you
+          choose.</p>
       </article>
     </div>
   </section>
 
-  <section class="section" id="seguridad">
-    <h3>Seguridad</h3>
+  <section class="section" id="security">
+    <h3>Security</h3>
     <div class="cards cards--two">
       <article class="card-block">
-        <h4>El manifiesto no lleva credenciales</h4>
-        <p>Las contraseñas de las personas las genera Morpheus con Cypher en el momento de
-          aplicar. No se escriben en el manifiesto, ni en el estado local, ni en los
-          registros. La validación rechaza un manifiesto que contenga claves
-          <code>password</code>, <code>token</code> o <code>access_token</code>.</p>
+        <h4>The manifest carries no credentials</h4>
+        <p>Persona passwords are generated by Morpheus Cypher at apply time. They are not
+          written to the manifest, to local state, or to logs. Validation rejects a
+          manifest containing <code>password</code>, <code>token</code> or
+          <code>access_token</code> keys.</p>
       </article>
       <article class="card-block">
-        <h4>Solo borra lo suyo</h4>
-        <p>Cada recurso que Leroy crea lleva un marcador de propiedad. <code>destroy</code>
-          comprueba el estado local y ese marcador remoto antes de borrar nada, y se
-          detiene si algo no coincide.</p>
+        <h4>It only removes its own</h4>
+        <p>Every resource Leroy creates carries an ownership marker. <code>destroy</code>
+          checks local state and that remote marker before deleting anything, and stops
+          if the two disagree.</p>
       </article>
       <article class="card-block">
-        <h4>Esta página es estática</h4>
-        <p>El constructor se ejecuta entero en tu navegador. No hay servidor, ni analítica,
-          ni llamadas a Morpheus. Lo que diseñas se guarda solo en tu navegador hasta que
-          lo descargas.</p>
+        <h4>This page is static</h4>
+        <p>The builder runs entirely in your browser. There is no server, no analytics and
+          no calls to Morpheus. What you design stays in your browser until you download
+          it.</p>
       </article>
       <article class="card-block">
-        <h4>Pensado para demostraciones</h4>
-        <p>Usa una cuenta de servicio con los permisos mínimos necesarios y un appliance de
-          demostración. No está pensado para producción.</p>
+        <h4>Built for demonstrations</h4>
+        <p>Use a least-privilege service account and a demonstration appliance. This is
+          not intended for production.</p>
       </article>
     </div>
   </section>
 
   <footer class="footer">
     <p>
-      <a href="https://github.com/da3m0nsec/leroy" target="_blank" rel="noopener noreferrer">Código y documentación en GitHub</a>
-      · Licencia MIT
+      <a href="https://github.com/da3m0nsec/leroy" target="_blank" rel="noopener noreferrer">Code and documentation on GitHub</a>
+      · MIT License
     </p>
-    <button type="button" class="button" data-open-builder>Abrir el constructor</button>
+    <button type="button" class="button" data-open-builder>Open the builder</button>
   </footer>
 </main>
 
-<!-- ---------------------------- constructor ---------------------------- -->
+<!-- ------------------------------ builder ------------------------------ -->
 <main class="layout only-builder" id="builder" hidden>
   <aside class="sidebar">
     <section class="panel">
-      <h2>Escenario</h2>
-      <select id="scenario" aria-label="Escenario de demostración"></select>
+      <h2>Scenario</h2>
+      <select id="scenario" aria-label="Demonstration scenario"></select>
       <p class="hint" id="scenario-summary"></p>
     </section>
 
     <section class="panel">
-      <h2>Identidad</h2>
+      <h2>Identity</h2>
       <div id="identity"></div>
     </section>
 
     <section class="panel">
-      <h2>Componentes</h2>
-      <p class="hint">Desactiva lo que el cliente no necesite. Las dependencias se mantienen solas.</p>
+      <h2>Components</h2>
+      <p class="hint">Switch off whatever the customer does not need. Dependencies hold themselves.</p>
       <div id="components" class="switches"></div>
     </section>
 
     <section class="panel panel--metrics">
-      <div><strong id="count">0</strong><span>recursos</span></div>
+      <div><strong id="count">0</strong><span>resources</span></div>
       <div><strong id="persona-count">0</strong><span>personas</span></div>
     </section>
 
     <section class="panel">
-      <h2>Validación</h2>
+      <h2>Validation</h2>
       <p class="status" id="status"></p>
       <ul class="problems" id="problems"></ul>
     </section>
@@ -268,16 +270,16 @@ export MORPHEUS_API_TOKEN="tu-token-de-administrador"
 
   <section class="stage">
     <div class="stage__bar">
-      <h2>Lienzo</h2>
+      <h2>Canvas</h2>
       <div class="stage__tools">
-        <button type="button" class="mini" id="add-persona">Añadir persona</button>
-        <button type="button" class="mini" id="relayout">Reordenar</button>
-        <span class="stage__hint">Arrastra las cajas, pulsa el interruptor para activarlas o desactivarlas</span>
+        <button type="button" class="mini" id="add-persona">Add persona</button>
+        <button type="button" class="mini" id="relayout">Re-lay out</button>
+        <span class="stage__hint">Drag the boxes; use the switch to turn a block on or off</span>
         <div class="zoom">
-          <button type="button" class="mini" id="zoom-out" aria-label="Alejar">&minus;</button>
+          <button type="button" class="mini" id="zoom-out" aria-label="Zoom out">&minus;</button>
           <output id="zoom-level">100%</output>
-          <button type="button" class="mini" id="zoom-in" aria-label="Acercar">+</button>
-          <button type="button" class="mini" id="zoom-fit">Ajustar</button>
+          <button type="button" class="mini" id="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" class="mini" id="zoom-fit">Fit</button>
         </div>
       </div>
     </div>
@@ -289,14 +291,14 @@ export MORPHEUS_API_TOKEN="tu-token-de-administrador"
 
   <aside class="details">
     <div class="tabs" role="tablist">
-      <button type="button" class="tab is-active" data-tab="inspector" role="tab">Detalle</button>
-      <button type="button" class="tab" data-tab="preview" role="tab">Manifiesto</button>
+      <button type="button" class="tab is-active" data-tab="inspector" role="tab">Details</button>
+      <button type="button" class="tab" data-tab="preview" role="tab">Manifest</button>
     </div>
     <div class="tab-panel" data-panel="inspector">
       <div id="inspector-body"></div>
     </div>
     <div class="tab-panel" data-panel="preview" hidden>
-      <p class="hint">Guárdalo y aplícalo con:</p>
+      <p class="hint">Save it and apply it with:</p>
       <pre class="command" id="command"></pre>
       <pre class="preview" id="preview"></pre>
     </div>
