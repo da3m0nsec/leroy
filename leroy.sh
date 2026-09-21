@@ -29,12 +29,27 @@ APPLIANCE_BUILD=""
 BASE_ACCOUNT_ROLE_ID=""
 BASE_USER_ROLE_ID=""
 ACTIVE_AUTH_FILE=""
+VERIFY_RESULTS=""
 TEMP_TOKEN_USERS=()
 TEMP_TOKEN_IDS=()
 TUI_ACTIVE=false
 TUI_FEATURES_JSON=""
+TUI_MANIFEST_FILE=""
+TUI_MANIFEST_LABEL="Built-in preset"
+TUI_MANIFEST_ORIGIN=""
+TUI_MANIFEST_KIND="preset"
+TUI_STATE_FILE=""
+TUI_DEMO_ID=""
+TUI_DEMO_NAME=""
+TUI_RESOURCE_COUNT="0"
+TUI_IDENTITY=""
+TUI_BUILD=""
 TUI_CONNECTION_STATE="Not checked"
 TUI_LAST_RESULT="No actions run in this session"
+TUI_LAST_RC=0
+TUI_LAST_FORCEABLE=false
+TUI_MANIFEST_TEMP=""
+LAST_WIZARD_FILE=""
 TUI_RESET='' TUI_BOLD='' TUI_DIM='' TUI_ACCENT='' TUI_MUTED=''
 TUI_SUCCESS='' TUI_WARNING='' TUI_DANGER='' TUI_SELECTED=''
 
@@ -48,6 +63,8 @@ cleanup() {
   local index token_id
   tui_leave_screen 2>/dev/null || true
   [[ -z "$ACTIVE_AUTH_FILE" ]] || rm -f "$ACTIVE_AUTH_FILE"
+  [[ -z "$VERIFY_RESULTS" ]] || rm -f "$VERIFY_RESULTS"
+  [[ -z "$TUI_MANIFEST_TEMP" ]] || rm -f "$TUI_MANIFEST_TEMP"
   if [[ -n "$MASTER_TOKEN" ]]; then
     for index in "${!TEMP_TOKEN_USERS[@]}"; do
       token_id="${TEMP_TOKEN_IDS[$index]:-}"
@@ -159,6 +176,34 @@ api_request() {
   printf '%s\n' "$response"
 }
 
+# Fetches a complete Morpheus collection. Morpheus answers list endpoints one
+# page at a time, so every consumer follows max/offset instead of trusting that
+# a single response body holds every record. The collection key is detected from
+# the first page when the caller does not name it.
+api_collection() {
+  local path="$1" key="${2:-}" token="${3:-$MASTER_TOKEN}"
+  local offset=0 page items count total source_key="$key" merged='[]' separator='&'
+  local -r max=100 limit=10000
+  [[ "$path" == *'?'* ]] || separator='?'
+  while true; do
+    page="$(api_request GET "${path}${separator}max=${max}&offset=${offset}" '' "$token")" || return
+    if [[ -z "$source_key" ]] || ! jq -e --arg key "$source_key" '(.[$key] // null) | type == "array"' <<<"$page" >/dev/null; then
+      source_key="$(jq -r 'to_entries | map(select((.key != "meta") and (.value | type == "array"))) | .[0].key // empty' <<<"$page")"
+      [[ -n "$source_key" ]] || { printf '%s\n' "$page"; return 0; }
+      [[ -n "$key" ]] || key="$source_key"
+    fi
+    items="$(jq -c --arg key "$source_key" '.[$key] // []' <<<"$page")"
+    count="$(jq 'length' <<<"$items")"
+    merged="$(jq -nc --argjson merged "$merged" --argjson items "$items" '$merged + $items')"
+    total="$(jq -r '.meta.total // empty' <<<"$page")"
+    ((count == max)) || break
+    offset=$((offset + max))
+    [[ ! "$total" =~ ^[0-9]+$ ]] || ((offset < total)) || break
+    ((offset <= limit)) || { log_warn "collection truncated at ${limit} records: ${path}"; break; }
+  done
+  jq -nc --arg key "$key" --argjson items "$merged" '{($key): $items, meta: {total: ($items | length)}}'
+}
+
 oauth_login() {
   local username="$1" password="$2" status curl_rc response form combined
   form="$(jq -nr --arg username "$username" --arg password "$password" '["grant_type=password","scope=write","client_id=morph-api",("username="+($username|@uri)),("password="+($password|@uri))] | join("&")')"
@@ -211,6 +256,8 @@ feature_defaults() {
   jq -nc '{multitenancy:true,roles:true,environments:true,groups:true,policies:true,automation:true,catalog:true}'
 }
 
+feature_total() { feature_defaults | jq -r 'length'; }
+
 manifest_features() {
   local file="$1"
   jq -c --argjson defaults "$(feature_defaults)" '$defaults * (.features // {})' "$file"
@@ -223,16 +270,6 @@ feature_enabled() {
 
 deployment_scope() {
   if feature_enabled multitenancy; then printf 'tenant'; else printf 'master'; fi
-}
-
-feature_resource_count() {
-  jq -r '(if .multitenancy then 2 else 0 end) +
-    (if .roles then 9 else 0 end) +
-    (if .environments then 3 else 0 end) +
-    (if .groups then 2 else 0 end) +
-    (if .policies then 4 else 0 end) +
-    (if .automation then 3 else 0 end) +
-    (if .catalog then 1 else 0 end)' <<<"$1"
 }
 
 validate_manifest() {
@@ -322,7 +359,7 @@ preflight() {
   [[ -n "$version" ]] || { die "$EXIT_VERIFY" 'Morpheus major version 9 is required'; return; }
   APPLIANCE_BUILD="$version"
   if feature_enabled roles; then
-    roles="$(api_request GET '/api/roles?max=100&includeDefaultAccess=true' '' "$MASTER_TOKEN")" || return
+    roles="$(api_collection '/api/roles?includeDefaultAccess=true' roles "$MASTER_TOKEN")" || return
     BASE_ACCOUNT_ROLE_ID="$(jq -r '[.. | objects | select((.roleType? == "account") and (.name? | test("Tenant Admin|Account Admin";"i")))][0].id // empty' <<<"$roles")"
     BASE_USER_ROLE_ID="$(jq -r '[.. | objects | select((.roleType? == "user") and (.name? | test("Admin";"i")))][0].id // empty' <<<"$roles")"
     [[ -n "$BASE_ACCOUNT_ROLE_ID" && -n "$BASE_USER_ROLE_ID" ]] || { die "$EXIT_VERIFY" 'required built-in Morpheus 9 base roles were not found'; return; }
@@ -339,31 +376,38 @@ preflight() {
   export BASE_ACCOUNT_ROLE_ID BASE_USER_ROLE_ID
 }
 
-resource_stream() {
-  jq -c '
-    . as $root |
-    ({multitenancy:true,roles:true,environments:true,groups:true,policies:true,automation:true,catalog:true} * (.features // {})) as $features |
-    (if $features.multitenancy then "tenant" else "master" end) as $scope |
-    (if $features.multitenancy then
-      {key:"role:tenant",type:"role",scope:"master",name:(.metadata.name+" Tenant Role"),spec:{kind:"account",profile:"tenant-root"}},
-      {key:"tenant",type:"tenant",scope:"master",name:.tenant.name,spec:.tenant}
-    else empty end),
-    (if $features.roles then
-      (.personas[] | {key:("role:"+.key),type:"role",scope:"master",name:.role,spec:{kind:"user",profile:.profile}}),
-      (.personas[] | {key:("cypher:"+.key),type:"cypher",scope:"master",name:.username,spec:{path:("password/24/"+$root.metadata.id+"/"+.username)}}),
-      (.personas[] | {key:("user:"+.key),type:"user",scope:"master",name:.username,spec:.})
-    else empty end),
-    (if $features.environments then (.environments[] | {key:("environment:"+.code),type:"environment",scope:$scope,name:.name,spec:.}) else empty end),
-    (if $features.groups then (.groups[] | {key:("group:"+.code),type:"group",scope:$scope,name:.name,spec:.}) else empty end),
-    (if $features.policies then (.policies[] | {key:("policy:"+.code),type:"policy",scope:$scope,name:.name,spec:.}) else empty end),
-    (if $features.automation then
-      (.automation.inputs[] | {key:("input:"+.fieldName),type:"input",scope:$scope,name:.name,spec:.}),
-      (.automation.tasks[] | {key:("task:"+.code),type:"task",scope:$scope,name:.name,spec:.}),
-      (.automation.workflows[] | {key:("workflow:"+.code),type:"workflow",scope:$scope,name:.name,spec:.})
-    else empty end),
-    (if $features.catalog then (.automation.catalogItems[] | {key:("catalog:"+.code),type:"catalog",scope:$scope,name:.name,spec:.}) else empty end)
-  ' "$CURRENT_MANIFEST"
-}
+RESOURCE_STREAM_JQ="$(
+  cat <<'JQ'
+. as $root |
+({multitenancy:true,roles:true,environments:true,groups:true,policies:true,automation:true,catalog:true} * (.features // {})) as $features |
+(if $features.multitenancy then "tenant" else "master" end) as $scope |
+(if $features.multitenancy then
+  {key:"role:tenant",type:"role",scope:"master",name:(.metadata.name+" Tenant Role"),spec:{kind:"account",profile:"tenant-root"}},
+  {key:"tenant",type:"tenant",scope:"master",name:.tenant.name,spec:.tenant}
+else empty end),
+(if $features.roles then
+  (.personas[] | {key:("role:"+.key),type:"role",scope:"master",name:.role,spec:{kind:"user",profile:.profile}}),
+  (.personas[] | {key:("cypher:"+.key),type:"cypher",scope:"master",name:.username,spec:{path:("password/24/"+$root.metadata.id+"/"+.username)}}),
+  (.personas[] | {key:("user:"+.key),type:"user",scope:"master",name:.username,spec:.})
+else empty end),
+(if $features.environments then (.environments[] | {key:("environment:"+.code),type:"environment",scope:$scope,name:.name,spec:.}) else empty end),
+(if $features.groups then (.groups[] | {key:("group:"+.code),type:"group",scope:$scope,name:.name,spec:.}) else empty end),
+(if $features.policies then (.policies[] | {key:("policy:"+.code),type:"policy",scope:$scope,name:.name,spec:.}) else empty end),
+(if $features.automation then
+  (.automation.inputs[] | {key:("input:"+.fieldName),type:"input",scope:$scope,name:.name,spec:.}),
+  (.automation.tasks[] | {key:("task:"+.code),type:"task",scope:$scope,name:.name,spec:.}),
+  (.automation.workflows[] | {key:("workflow:"+.code),type:"workflow",scope:$scope,name:.name,spec:.})
+else empty end),
+(if $features.catalog then (.automation.catalogItems[] | {key:("catalog:"+.code),type:"catalog",scope:$scope,name:.name,spec:.}) else empty end)
+JQ
+)"
+readonly RESOURCE_STREAM_JQ
+
+resource_stream() { jq -c "$RESOURCE_STREAM_JQ" "$CURRENT_MANIFEST"; }
+
+# Counts the resources a manifest expands to. The manifest JSON is read from
+# standard input so the same rule serves a live manifest and a saved state file.
+resource_count() { jq -c "$RESOURCE_STREAM_JQ" | wc -l | tr -d ' \n'; }
 
 resource_path() {
   case "$1" in
@@ -415,8 +459,17 @@ remote_is_owned() {
   ' <<<"$response" >/dev/null
 }
 
+# Decides whether a resource that failed the ownership check still looks like
+# Leroy's, which is what --force is allowed to delete. The tostring arm must be
+# parenthesized: piping into it hides every other value from the name check.
 remote_has_leroy_identity() {
-  jq -e 'tostring | contains("Managed by Leroy demo:") or ([.. | strings] | any(startswith("leroy-")))' <<<"$1" >/dev/null
+  local prefix
+  prefix="$(jq -r '.metadata.prefix // empty' "$CURRENT_MANIFEST" 2>/dev/null || true)"
+  [[ -n "$prefix" && "$prefix" != null ]] || prefix='leroy-'
+  jq -e --arg prefix "$prefix" '
+    (tostring | contains("Managed by Leroy demo:")) or
+    ([.. | strings] | any(startswith($prefix)))
+  ' <<<"$1" >/dev/null
 }
 
 find_remote() {
@@ -424,7 +477,7 @@ find_remote() {
   type="$(jq -r '.type' <<<"$spec")"; scope="$(jq -r '.scope' <<<"$spec")"; name="$(jq -r '.name' <<<"$spec")"
   if [[ "$type" == cypher ]]; then cypher_find "$(jq -r '.spec.path' <<<"$spec")" 2>/dev/null || true; return; fi
   path="$(resource_path "$type")"; token="$(resource_token "$scope")"; encoded="$(urlencode "$name")"
-  response="$(api_request GET "${path}?max=100&name=${encoded}" '' "$token" 2>/dev/null)" || return 0
+  response="$(api_collection "${path}?name=${encoded}" '' "$token" 2>/dev/null)" || return 0
   jq -c --arg name "$name" '[.. | objects | select(.id? and ((.name?==$name) or (.username?==$name) or (.code?==$name)))][0] // empty' <<<"$response"
 }
 
@@ -471,7 +524,7 @@ resolve_policy_type() {
     cypher) pattern='cypher access|cypher' ;;
     *) return "$EXIT_USAGE" ;;
   esac
-  response="$(api_request GET '/api/policy-types?max=200' '' "$(resource_token "$(deployment_scope)")")" || return
+  response="$(api_collection '/api/policy-types' '' "$(resource_token "$(deployment_scope)")")" || return
   match="$(jq -c --arg pattern "$pattern" '[.. | objects | select(.id? and (((.name? // "")+" "+(.code? // "")) | test($pattern;"i")))][0] // empty' <<<"$response")"
   [[ -n "$match" ]] || { die "$EXIT_VERIFY" "required Morpheus policy type is unavailable: $semantic"; return; }
   jq -c '{id,code,name}' <<<"$match"
@@ -694,11 +747,11 @@ resource_delete() {
 demo_destroy() {
   local demo_id="$1" yes="$2" force="$3" entry state_name
   [[ "$yes" == true ]] || { die "$EXIT_USAGE" 'destroy requires --yes'; return; }
-  CURRENT_DEMO_ID="$demo_id"; STATE_FILE="${LEROY_STATE_DIR}/${demo_id}.json"
+  select_state "$demo_id" || return
   [[ -r "$STATE_FILE" ]] || { die "$EXIT_NOT_FOUND" "state not found for demo: $demo_id"; return; }
   state_assert_appliance || return
   CURRENT_MANIFEST="$(mktemp "${TMPDIR:-/tmp}/leroy-manifest.XXXXXX")"; jq -S '.manifest' "$STATE_FILE" >"$CURRENT_MANIFEST"
-  CURRENT_MARKER="Managed by Leroy demo:${demo_id}"; state_name="$(jq -r '.manifest.metadata.name' "$STATE_FILE")"
+  state_name="$(jq -r '.manifest.metadata.name' "$STATE_FILE")"
   [[ -n "$state_name" ]] || return "$EXIT_RESPONSE"
   preflight || return
   while IFS= read -r entry; do resource_delete "$entry" "$force" || return; done < <(jq -c '.resources | reverse[]' "$STATE_FILE")
@@ -716,62 +769,226 @@ revoke_token() {
   [[ -z "$token_id" ]] || api_request DELETE "/api/tokens/${token_id}?userId=${user_id}" '' "$MASTER_TOKEN" >/dev/null 2>&1 || true
 }
 
+# Appends one verification outcome. Results are collected in a file so the
+# report can list every check instead of only a failure count.
+verify_record() {
+  local check="$1" target="$2" status="$3" detail="${4:-}"
+  jq -nc --arg check "$check" --arg target "$target" --arg status "$status" --arg detail "$detail" \
+    '{check:$check,target:$target,status:$status,detail:$detail}' >>"$VERIFY_RESULTS"
+  [[ "$status" != fail ]] || log_error "${check} ${target}${detail:+: $detail}"
+}
+
+verify_failures() { jq -s '[.[] | select(.status == "fail")] | length' "$VERIFY_RESULTS"; }
+
+emit_verify_report() {
+  local deep="$1" failed total
+  failed="$(verify_failures)"; total="$(jq -s 'length' "$VERIFY_RESULTS")"
+  if [[ "$LEROY_OUTPUT" == json ]]; then
+    jq -s --arg id "$CURRENT_DEMO_ID" --argjson deep "$deep" '{
+      verified: all(.[]; .status != "fail"),
+      demoId: $id, deep: $deep,
+      checked: length, failed: ([.[] | select(.status == "fail")] | length),
+      checks: .
+    }' "$VERIFY_RESULTS"
+  else
+    printf '%-7s %-10s %s\n' RESULT CHECK TARGET
+    jq -r '[.status,.check,.target,.detail] | @tsv' "$VERIFY_RESULTS" |
+      while IFS=$'\t' read -r status check target detail; do
+        printf '%-7s %-10s %s\n' "$status" "$check" "${target}${detail:+ (${detail})}"
+      done
+    printf '%s checks, %s failed%s\n' "$total" "$failed" "$([[ "$deep" == true ]] && printf ' (deep)')"
+  fi
+}
+
 verify_persona() {
   local persona="$1" key username subdomain cypher_path password login token token_id user_id allowed_path
   key="$(jq -r '.key' <<<"$persona")"; username="$(jq -r '.username' <<<"$persona")"; subdomain="$(jq -r '.tenant.subdomain' "$CURRENT_MANIFEST")"
   cypher_path="$(resource_id "cypher:${key}")"; user_id="$(resource_id "user:${key}")"
-  password="$(api_request GET "/api/cypher/${cypher_path}" '' "$MASTER_TOKEN" | jq -r '.data // .cypher.data // empty')"
-  login="$(oauth_login "${subdomain}\\${username}" "$password")" || return
+  password="$(api_request GET "/api/cypher/${cypher_path}" '' "$MASTER_TOKEN" 2>/dev/null | jq -r '.data // .cypher.data // empty' || true)"
+  if [[ -z "$password" ]]; then verify_record persona "$username" fail 'generated password is unavailable'; return 0; fi
+  if ! login="$(oauth_login "${subdomain}\\${username}" "$password" 2>/dev/null)"; then
+    verify_record persona "$username" fail 'temporary persona login failed'; return 0
+  fi
   token="$(jq -r '.access_token' <<<"$login")"; token_id="$(jq -r '.id // .token.id // empty' <<<"$login")"
   TEMP_TOKEN_USERS+=("$user_id"); TEMP_TOKEN_IDS+=("$token_id")
   [[ -n "$token_id" ]] || token_id="$(find_token_id "$user_id")"
-  TEMP_TOKEN_IDS[$((${#TEMP_TOKEN_IDS[@]} - 1))]="$token_id"
+  TEMP_TOKEN_IDS[${#TEMP_TOKEN_IDS[@]} - 1]="$token_id"
   case "$key" in
     admin) allowed_path='/api/whoami' ;;
     operator) allowed_path='/api/tasks?max=1' ;;
     consumer) allowed_path='/api/catalog-item-types?max=1' ;;
   esac
-  if ! api_request GET "$allowed_path" '' "$token" >/dev/null; then revoke_token "$token_id" "$user_id"; return "$EXIT_VERIFY"; fi
-  if [[ "$key" == consumer ]] && api_request GET '/api/tasks?max=1' '' "$token" >/dev/null 2>&1; then
-    revoke_token "$token_id" "$user_id"; die "$EXIT_VERIFY" 'service consumer unexpectedly has task administration access'; return
+  if ! api_request GET "$allowed_path" '' "$token" >/dev/null 2>&1; then
+    verify_record persona "$username" fail "expected access was denied: $allowed_path"
+  elif [[ "$key" == consumer ]] && api_request GET '/api/tasks?max=1' '' "$token" >/dev/null 2>&1; then
+    verify_record persona "$username" fail 'service consumer unexpectedly has task administration access'
+  else
+    verify_record persona "$username" pass "$allowed_path"
   fi
   revoke_token "$token_id" "$user_id"
 }
 
 demo_verify() {
-  local deep="${1:-false}" entry remote expected failures=0 workflow_id result persona execution_token
-  local operator op_key op_path op_password op_login op_token_id="" op_user=""
+  local deep="${1:-false}" entry remote expected type name failures workflow_id result persona execution_token
+  local operator op_key op_path op_password op_login op_token_id="" op_user="" workflow_code
   [[ -r "$STATE_FILE" ]] || { die "$EXIT_NOT_FOUND" 'demo state does not exist'; return; }
   state_assert_appliance || return
-  jq -e --slurpfile manifest "$CURRENT_MANIFEST" '.manifest == $manifest[0]' "$STATE_FILE" >/dev/null || { log_error 'state manifest differs from the requested manifest'; failures=$((failures + 1)); }
+  VERIFY_RESULTS="$(mktemp "${TMPDIR:-/tmp}/leroy-verify.XXXXXX")" || return "$EXIT_API"
+  : >"$VERIFY_RESULTS"
+  if jq -e --slurpfile manifest "$CURRENT_MANIFEST" '.manifest == $manifest[0]' "$STATE_FILE" >/dev/null; then
+    verify_record manifest "$CURRENT_DEMO_ID" pass
+  else
+    verify_record manifest "$CURRENT_DEMO_ID" fail 'state manifest differs from the requested manifest'
+  fi
   while IFS= read -r entry; do
-    if ! remote="$(resource_get "$entry" 2>/dev/null)"; then log_error "missing $(jq -r '.type+":"+.name' <<<"$entry")"; failures=$((failures + 1)); continue; fi
-    expected="$(jq -r '.spec.path // .name' <<<"$entry")"
-    remote_is_owned "$(jq -r '.type' <<<"$entry")" "$remote" "$expected" || { log_error "ownership mismatch: $(jq -r '.name' <<<"$entry")"; failures=$((failures + 1)); }
-  done < <(jq -c '.resources[]' "$STATE_FILE")
-  if [[ "$deep" == true && "$failures" -eq 0 ]]; then
-    if feature_enabled roles; then
-      while IFS= read -r persona; do verify_persona "$persona" || failures=$((failures + 1)); done < <(jq -c '.personas[]' "$CURRENT_MANIFEST")
+    type="$(jq -r '.type' <<<"$entry")"; name="$(jq -r '.name' <<<"$entry")"
+    if ! remote="$(resource_get "$entry" 2>/dev/null)"; then
+      verify_record resource "${type}:${name}" fail 'resource is missing on the appliance'; continue
     fi
-    if feature_enabled automation && ((failures == 0)); then
+    expected="$(jq -r '.spec.path // .name' <<<"$entry")"
+    if remote_is_owned "$type" "$remote" "$expected"; then
+      verify_record resource "${type}:${name}" pass
+    else
+      verify_record resource "${type}:${name}" fail 'ownership marker does not match'
+    fi
+  done < <(jq -c '.resources[]' "$STATE_FILE")
+  failures="$(verify_failures)"
+  if [[ "$deep" == true ]] && ((failures == 0)); then
+    if feature_enabled roles; then
+      while IFS= read -r persona; do verify_persona "$persona"; done < <(jq -c '.personas[]' "$CURRENT_MANIFEST")
+    fi
+    if feature_enabled automation && (($(verify_failures) == 0)); then
       execution_token="$MASTER_TOKEN"
+      workflow_code="$(jq -r '.automation.workflows[0].code' "$CURRENT_MANIFEST")"
       if feature_enabled roles; then
         operator="$(jq -c '.personas[] | select(.key=="operator")' "$CURRENT_MANIFEST")"
         op_key="$(jq -r '.key' <<<"$operator")"; op_path="$(resource_id "cypher:${op_key}")"; op_user="$(resource_id "user:${op_key}")"
-        op_password="$(api_request GET "/api/cypher/${op_path}" '' "$MASTER_TOKEN" | jq -r '.data // .cypher.data // empty')"
-        op_login="$(oauth_login "$(jq -r '.tenant.subdomain' "$CURRENT_MANIFEST")\\$(jq -r '.username' <<<"$operator")" "$op_password")" || return "$EXIT_VERIFY"
-        execution_token="$(jq -r '.access_token' <<<"$op_login")"; op_token_id="$(jq -r '.id // .token.id // empty' <<<"$op_login")"; [[ -n "$op_token_id" ]] || op_token_id="$(find_token_id "$op_user")"
-        TEMP_TOKEN_USERS+=("$op_user"); TEMP_TOKEN_IDS+=("$op_token_id")
+        op_password="$(api_request GET "/api/cypher/${op_path}" '' "$MASTER_TOKEN" 2>/dev/null | jq -r '.data // .cypher.data // empty' || true)"
+        if ! op_login="$(oauth_login "$(jq -r '.tenant.subdomain' "$CURRENT_MANIFEST")\\$(jq -r '.username' <<<"$operator")" "$op_password" 2>/dev/null)"; then
+          verify_record workflow "$workflow_code" fail 'operator login for workflow execution failed'
+          op_login=""
+        else
+          execution_token="$(jq -r '.access_token' <<<"$op_login")"; op_token_id="$(jq -r '.id // .token.id // empty' <<<"$op_login")"; [[ -n "$op_token_id" ]] || op_token_id="$(find_token_id "$op_user")"
+          TEMP_TOKEN_USERS+=("$op_user"); TEMP_TOKEN_IDS+=("$op_token_id")
+        fi
+      else
+        op_login="skipped"
       fi
-      workflow_id="$(resource_id "workflow:$(jq -r '.automation.workflows[0].code' "$CURRENT_MANIFEST")")"
-      result="$(api_request POST "/api/task-sets/${workflow_id}/execute" '{"job":{"customOptions":{"demoMessage":"Verified by Leroy"}}}' "$execution_token" 2>/dev/null || true)"
-      jq -e '(.success // true) != false' <<<"${result:-null}" >/dev/null || failures=$((failures + 1))
+      if [[ -n "$op_login" ]]; then
+        workflow_id="$(resource_id "workflow:${workflow_code}")"
+        result="$(api_request POST "/api/task-sets/${workflow_id}/execute" '{"job":{"customOptions":{"demoMessage":"Verified by Leroy"}}}' "$execution_token" 2>/dev/null || true)"
+        if jq -e '(.success // true) != false' <<<"${result:-null}" >/dev/null 2>&1; then
+          verify_record workflow "$workflow_code" pass 'executed as the operator persona'
+        else
+          verify_record workflow "$workflow_code" fail 'workflow execution was rejected'
+        fi
+      fi
       [[ -z "$op_token_id" ]] || revoke_token "$op_token_id" "$op_user"
     fi
+  elif [[ "$deep" == true ]]; then
+    verify_record deep "$CURRENT_DEMO_ID" skip 'structural checks failed first'
   fi
-  if ((failures > 0)); then die "$EXIT_VERIFY" "$failures verification check(s) failed"; return; fi
-  if [[ "$LEROY_OUTPUT" == json ]]; then jq -n --arg id "$CURRENT_DEMO_ID" --argjson deep "$deep" '{verified:true,demoId:$id,deep:$deep}'
-  else printf 'Demo %s verified%s.\n' "$CURRENT_DEMO_ID" "$([[ "$deep" == true ]] && printf ' (deep)' || true)"; fi
+  emit_verify_report "$deep"
+  failures="$(verify_failures)"
+  rm -f "$VERIFY_RESULTS"; VERIFY_RESULTS=""
+  ((failures == 0)) || { die "$EXIT_VERIFY" "$failures verification check(s) failed"; return; }
+}
+
+# Points the lifecycle globals at a saved deployment without loading a manifest
+# from disk, so read-only commands can inspect recorded state.
+select_state() {
+  local demo_id="$1"
+  [[ "$demo_id" =~ ^[a-z][a-z0-9-]{2,40}$ ]] || { die "$EXIT_USAGE" "invalid demo ID: $demo_id"; return; }
+  CURRENT_DEMO_ID="$demo_id"
+  CURRENT_MARKER="Managed by Leroy demo:${demo_id}"
+  STATE_FILE="${LEROY_STATE_DIR}/${demo_id}.json"
+}
+
+# Reports what Leroy recorded for one deployment: the resources it owns, their
+# Morpheus IDs, and whether the record is complete for its component selection.
+demo_state_report() {
+  local expected recorded
+  [[ -r "$STATE_FILE" ]] || { die "$EXIT_NOT_FOUND" "state not found for demo: $CURRENT_DEMO_ID"; return; }
+  expected="$(jq -c '.manifest' "$STATE_FILE" | resource_count)"
+  recorded="$(jq -r '.resources | length' "$STATE_FILE")"
+  if [[ "$LEROY_OUTPUT" == json ]]; then
+    jq --argjson defaults "$(feature_defaults)" --argjson expected "$expected" '{
+      demoId: .manifest.metadata.id,
+      name: .manifest.metadata.name,
+      applianceUrl: .applianceUrl,
+      applianceBuild: (.applianceBuild // ""),
+      features: ($defaults * (.manifest.features // {})),
+      expectedResources: $expected,
+      recordedResources: (.resources | length),
+      complete: ((.resources | length) == $expected),
+      resources: [.resources[] | {key, type, scope, name, id, configured: (.configured // false)}]
+    }' "$STATE_FILE"
+    return
+  fi
+  printf 'Demo:       %s (%s)\n' "$(jq -r '.manifest.metadata.id' "$STATE_FILE")" "$(jq -r '.manifest.metadata.name' "$STATE_FILE")"
+  printf 'Appliance:  %s\n' "$(jq -r '.applianceUrl' "$STATE_FILE")"
+  printf 'Build:      %s\n' "$(jq -r '.applianceBuild // "unknown"' "$STATE_FILE")"
+  printf 'Components: %s\n' "$(jq -r --argjson defaults "$(feature_defaults)" '($defaults * (.manifest.features // {})) | to_entries | map(select(.value) | .key) | join(", ")' "$STATE_FILE")"
+  printf 'Resources:  %s recorded of %s expected\n\n' "$recorded" "$expected"
+  printf '%-12s %-10s %-8s %s\n' TYPE ID SCOPE NAME
+  jq -r '.resources[] | [.type, .id, .scope, .name] | @tsv' "$STATE_FILE" |
+    while IFS=$'\t' read -r type id scope name; do
+      printf '%-12s %-10s %-8s %s\n' "$type" "$id" "$scope" "$name"
+    done
+}
+
+# Lists every deployment recorded in the state directory. An operator who
+# returns to a machine needs this before any destructive action.
+demo_list() {
+  local file demos='[]' entry expected
+  if [[ -d "$LEROY_STATE_DIR" ]]; then
+    for file in "$LEROY_STATE_DIR"/*.json; do
+      [[ -r "$file" ]] || continue
+      jq -e '.stateVersion == 1 and (.manifest.metadata.id | type == "string")' "$file" >/dev/null 2>&1 || continue
+      expected="$(jq -c '.manifest' "$file" | resource_count)"
+      entry="$(jq -c --argjson defaults "$(feature_defaults)" --argjson expected "$expected" '{
+        demoId: .manifest.metadata.id,
+        name: .manifest.metadata.name,
+        applianceUrl: .applianceUrl,
+        applianceBuild: (.applianceBuild // ""),
+        expectedResources: $expected,
+        recordedResources: (.resources | length),
+        complete: ((.resources | length) == $expected),
+        components: [($defaults * (.manifest.features // {})) | to_entries[] | select(.value) | .key]
+      }' "$file")"
+      demos="$(jq -nc --argjson demos "$demos" --argjson entry "$entry" '$demos + [$entry]')"
+    done
+  fi
+  if [[ "$LEROY_OUTPUT" == json ]]; then
+    jq -n --argjson demos "$demos" '{demos: $demos}'
+    return
+  fi
+  printf '%-20s %-11s %-11s %s\n' 'DEMO ID' RESOURCES COMPONENTS APPLIANCE
+  jq -r --argjson total "$(feature_total)" '.[] |
+    [.demoId,
+     ((.recordedResources | tostring) + "/" + (.expectedResources | tostring)),
+     ((.components | length | tostring) + "/" + ($total | tostring)),
+     .applianceUrl] | @tsv' <<<"$demos" |
+    while IFS=$'\t' read -r id resources components appliance; do
+      printf '%-20s %-11s %-11s %s\n' "$id" "$resources" "$components" "$appliance"
+    done
+}
+
+# Summarizes a manifest read from standard input. The wizard writes the whole
+# document to the file; printing it to the terminal scrolls the prompt away.
+manifest_summary() {
+  local manifest
+  manifest="$(cat)"
+  jq -r --argjson defaults "$(feature_defaults)" '
+    "Demo ID:      \(.metadata.id)",
+    "Organization: \(.metadata.name)",
+    "Subdomain:    \(.tenant.subdomain)",
+    "Components:   \(($defaults * (.features // {})) | to_entries | map(select(.value) | .key) | join(", "))",
+    "Personas:     \([.personas[].username] | join(", "))",
+    "Environments: \(.environments | length), groups: \(.groups | length), policies: \(.policies | length)",
+    "Cypher keys:  password/24/\(.metadata.id)/*"
+  ' <<<"$manifest"
+  printf 'Resources:    %s\n' "$(resource_count <<<"$manifest")"
 }
 
 wizard_manifest() {
@@ -797,10 +1014,14 @@ wizard_manifest() {
     walk(if type=="string" then gsub("Managed by Leroy demo:leroy-demo";"Managed by Leroy demo:"+$id) else . end)
   ')"
   if [[ -n "$TUI_FEATURES_JSON" ]]; then generated="$(jq --argjson features "$TUI_FEATURES_JSON" '.features=$features' <<<"$generated")"; fi
-  printf '\n%s\n\nSave this manifest to %s? [y/N]: ' "$(jq . <<<"$generated")" "$output"; read -r answer
+  printf '\n'
+  manifest_summary <<<"$generated"
+  printf '\nThe complete manifest is written to the file.\n'
+  printf '\nSave this manifest to %s? [y/N]: ' "$output"; read -r answer
   [[ "$answer" =~ ^[Yy]$ ]] || return 0
   [[ ! -e "$output" ]] || { die "$EXIT_CONFLICT" "file already exists: $output"; return; }
   printf '%s\n' "$generated" | jq -S . >"$output"; chmod 600 "$output"; printf 'Saved %s\n' "$output"
+  LAST_WIZARD_FILE="$output"
 }
 
 status_command() {
@@ -811,9 +1032,9 @@ status_command() {
 }
 
 environments_list() {
-  local response; response="$(api_request GET '/api/environments' '' "$MASTER_TOKEN")" || return
+  local response; response="$(api_collection '/api/environments' environments "$MASTER_TOKEN")" || return
   if [[ "$LEROY_OUTPUT" == json ]]; then printf '%s\n' "$response"
-  else jq -r '["ID","NAME","CODE","VISIBILITY"],(.environments[]?|[.id,.name,.code,(.visibility//"-")])|@tsv' <<<"$response"; fi
+  else jq -r '["ID","NAME","CODE","VISIBILITY"],(.environments[]?|[.id,.name,(.code//"-"),(.visibility//"-")])|@tsv' <<<"$response"; fi
 }
 
 environments_get() {
@@ -854,6 +1075,13 @@ tui_columns() {
   printf '%s\n' "$columns"
 }
 
+tui_lines() {
+  local lines
+  lines="$(tput lines 2>/dev/null || printf '24')"
+  [[ "$lines" =~ ^[1-9][0-9]*$ ]] || lines=24
+  printf '%s\n' "$lines"
+}
+
 tui_crop() {
   local text="$1" width="$2"
   ((width > 0)) || width=1
@@ -870,30 +1098,89 @@ tui_rule() {
   printf '%s\n' "${rule// /-}"
 }
 
+# Reports the saved deployment that belongs to the manifest currently selected
+# in the TUI, so the dashboard never describes a different demo.
 tui_state_summary() {
-  local file="${LEROY_STATE_DIR}/leroy-demo.json" count expected features
-  if [[ ! -r "$file" ]]; then
+  local count expected
+  if [[ -z "$TUI_STATE_FILE" || ! -r "$TUI_STATE_FILE" ]]; then
     printf 'Not created'
     return
   fi
-  count="$(jq -r '.resources | length' "$file" 2>/dev/null || printf '?')"
-  features="$(jq -c --argjson defaults "$(feature_defaults)" '$defaults * (.manifest.features // {})' "$file" 2>/dev/null || feature_defaults)"
-  expected="$(feature_resource_count "$features")"
+  count="$(jq -r '.resources | length' "$TUI_STATE_FILE" 2>/dev/null || printf '?')"
+  expected="$(jq -c '.manifest' "$TUI_STATE_FILE" 2>/dev/null | resource_count || printf '?')"
   if [[ "$count" == "$expected" ]]; then printf 'Ready (%s/%s resources)' "$count" "$expected"
   else printf 'Partial (%s/%s resources)' "$count" "$expected"; fi
 }
 
-tui_load_features() {
-  local file="${LEROY_STATE_DIR}/leroy-demo.json"
-  if [[ -r "$file" ]]; then
-    TUI_FEATURES_JSON="$(jq -c --argjson defaults "$(feature_defaults)" '$defaults * (.manifest.features // {})' "$file" 2>/dev/null || feature_defaults)"
-  else
-    TUI_FEATURES_JSON="$(feature_defaults)"
-  fi
+tui_deployed_features() {
+  [[ -n "$TUI_STATE_FILE" && -r "$TUI_STATE_FILE" ]] || return 0
+  jq -Sc --argjson defaults "$(feature_defaults)" '$defaults * (.manifest.features // {})' "$TUI_STATE_FILE" 2>/dev/null || true
 }
 
 tui_selected_feature_count() {
   jq -r '[.[] | select(. == true)] | length' <<<"$TUI_FEATURES_JSON"
+}
+
+
+# True when the operator changed the selection after a deployment was recorded.
+# Plan and apply refuse that combination, so the dashboard has to say it.
+tui_feature_drift() {
+  local deployed
+  deployed="$(tui_deployed_features)"
+  [[ -n "$deployed" ]] || return 1
+  [[ "$deployed" != "$(jq -Sc . <<<"$TUI_FEATURES_JSON")" ]]
+}
+
+tui_component_summary() {
+  local total deployed
+  total="$(feature_total)"
+  if tui_feature_drift; then
+    deployed="$(tui_deployed_features)"
+    printf '%s/%s selected, deployed %s/%s - recreate required' \
+      "$(tui_selected_feature_count)" "$total" \
+      "$(jq -r '[.[] | select(. == true)] | length' <<<"$deployed")" "$total"
+  else
+    printf '%s/%s selected' "$(tui_selected_feature_count)" "$total"
+  fi
+}
+
+# Rebuilds the effective manifest from the selected source plus the selected
+# components, then republishes the demo identity the dashboard and the
+# lifecycle actions rely on.
+tui_sync_manifest() {
+  manifest_to_temp "$TUI_MANIFEST_FILE" || return
+  TUI_DEMO_ID="$CURRENT_DEMO_ID"
+  TUI_DEMO_NAME="$(jq -r '.metadata.name' "$CURRENT_MANIFEST")"
+  TUI_STATE_FILE="$STATE_FILE"
+  TUI_RESOURCE_COUNT="$(resource_count <"$CURRENT_MANIFEST")"
+}
+
+tui_bootstrap_manifest() {
+  tui_use_preset
+  tui_sync_manifest || return
+  if [[ -r "$TUI_STATE_FILE" ]]; then
+    TUI_FEATURES_JSON="$(tui_deployed_features)"
+    tui_sync_manifest || return
+  fi
+}
+
+tui_apply_identity() {
+  local response="$1" user
+  user="$(jq -r '.user.username // .user.displayName // .user.email // "unknown"' <<<"$response")"
+  TUI_BUILD="$(jq -r '[.. | objects | (.buildVersion?, .applianceVersion?, .version?)] | map(select(type == "string")) | first // empty' <<<"$response")"
+  TUI_IDENTITY="$user"
+  TUI_CONNECTION_STATE="Connected as ${user}${TUI_BUILD:+ (Morpheus ${TUI_BUILD})}"
+}
+
+tui_probe_connection() {
+  local response
+  if ! response="$(api_request GET '/api/whoami' '' "$MASTER_TOKEN" 2>/dev/null)"; then
+    TUI_CONNECTION_STATE='Not reachable'
+    TUI_IDENTITY=''
+    TUI_BUILD=''
+    return 1
+  fi
+  tui_apply_identity "$response"
 }
 
 tui_toggle_component() {
@@ -902,42 +1189,62 @@ tui_toggle_component() {
   TUI_COMPONENT_NOTICE='Selection updated.'
   case "$key" in
     multitenancy | roles)
-      TUI_FEATURES_JSON="$(jq -c --argjson value "$target" '.multitenancy=$value | .roles=$value' <<<"$TUI_FEATURES_JSON")"
+      TUI_FEATURES_JSON="$(jq -Sc --argjson value "$target" '.multitenancy=$value | .roles=$value' <<<"$TUI_FEATURES_JSON")"
       TUI_COMPONENT_NOTICE='Multitenancy and persona roles are deployed together.'
       ;;
     groups)
-      TUI_FEATURES_JSON="$(jq -c --argjson value "$target" '.groups=$value | if $value then . else .policies=false end' <<<"$TUI_FEATURES_JSON")"
+      TUI_FEATURES_JSON="$(jq -Sc --argjson value "$target" '.groups=$value | if $value then . else .policies=false end' <<<"$TUI_FEATURES_JSON")"
       [[ "$target" == true ]] || TUI_COMPONENT_NOTICE='Policies were also disabled because they require groups.'
       ;;
     policies)
-      TUI_FEATURES_JSON="$(jq -c --argjson value "$target" '.policies=$value | if $value then .groups=true else . end' <<<"$TUI_FEATURES_JSON")"
+      TUI_FEATURES_JSON="$(jq -Sc --argjson value "$target" '.policies=$value | if $value then .groups=true else . end' <<<"$TUI_FEATURES_JSON")"
       [[ "$target" == false ]] || TUI_COMPONENT_NOTICE='Groups were also enabled because policies require them.'
       ;;
     automation)
-      TUI_FEATURES_JSON="$(jq -c --argjson value "$target" '.automation=$value | if $value then . else .catalog=false end' <<<"$TUI_FEATURES_JSON")"
+      TUI_FEATURES_JSON="$(jq -Sc --argjson value "$target" '.automation=$value | if $value then . else .catalog=false end' <<<"$TUI_FEATURES_JSON")"
       [[ "$target" == true ]] || TUI_COMPONENT_NOTICE='Catalog was also disabled because it requires automation.'
       ;;
     catalog)
-      TUI_FEATURES_JSON="$(jq -c --argjson value "$target" '.catalog=$value | if $value then .automation=true else . end' <<<"$TUI_FEATURES_JSON")"
+      TUI_FEATURES_JSON="$(jq -Sc --argjson value "$target" '.catalog=$value | if $value then .automation=true else . end' <<<"$TUI_FEATURES_JSON")"
       [[ "$target" == false ]] || TUI_COMPONENT_NOTICE='Automation was also enabled because catalog requires it.'
       ;;
-    *) TUI_FEATURES_JSON="$(jq -c --arg key "$key" --argjson value "$target" '.[$key]=$value' <<<"$TUI_FEATURES_JSON")" ;;
+    *) TUI_FEATURES_JSON="$(jq -Sc --arg key "$key" --argjson value "$target" '.[$key]=$value' <<<"$TUI_FEATURES_JSON")" ;;
   esac
 }
 
+# Emits one "<checked><changed>" pair per component, in order. One jq call keeps
+# the selector responsive; a call per checkbox made every redraw visibly slow.
+tui_component_flags() {
+  jq -rn --argjson selected "$TUI_FEATURES_JSON" \
+    --argjson deployed "${1:-null}" --argjson keys "$TUI_COMPONENT_KEYS_JSON" '
+    $keys[] |
+      (if $selected[.] == true then "x" else " " end) +
+      (if ($deployed != null and $selected[.] != $deployed[.]) then "*" else " " end)'
+}
+
 tui_render_components() {
-  local selected="$1" width index key checked row description available gap
-  width="$(tui_columns)"; tui_clear
+  local selected="$1" width index key checked row description available gap deployed marker
+  local -a flags=()
+  width="$(tui_columns)"
+  deployed="$(tui_deployed_features)"
+  mapfile -t flags < <(tui_component_flags "${deployed:-null}")
+  tui_clear
   printf '%s%s  DEPLOYMENT COMPONENTS%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$TUI_RESET"
   tui_rule "$width"
-  printf '  %s\n\n' "$(tui_crop 'Everything is selected by default. Deselected platform content is not created.' "$((width - 2))")"
+  printf '  %s\n' "$(tui_crop 'Everything is selected by default. Deselected platform content is not created.' "$((width - 2))")"
+  printf '  %s\n\n' "$(tui_crop "Resources for this selection: ${TUI_RESOURCE_COUNT:-?}" "$((width - 2))")"
   for index in "${!TUI_COMPONENT_KEYS[@]}"; do
-    key="${TUI_COMPONENT_KEYS[$index]}"; description="${TUI_COMPONENT_HINTS[$index]}"
-    if jq -e --arg key "$key" '.[$key] == true' <<<"$TUI_FEATURES_JSON" >/dev/null; then checked='x'; else checked=' '; fi
-    row="  [${checked}] ${TUI_COMPONENT_LABELS[$index]}"
+    key="${TUI_COMPONENT_KEYS[$index]}"
+    description="${TUI_COMPONENT_HINTS[$index]}"
+    checked="${flags[$index]:0:1}"
+    marker="${flags[$index]:1:1}"
+    [[ "$marker" != '*' ]] || description="changed - ${description}"
+    row="  [${checked}]${marker}${TUI_COMPONENT_LABELS[$index]}"
     if ((width >= 76)); then
-      available=$((width - ${#row} - ${#description} - 2)); ((available < 1)) && available=1
-      printf -v gap '%*s' "$available" ''; row="${row}${gap}${description}"
+      available=$((width - ${#row} - ${#description} - 2))
+      ((available < 1)) && available=1
+      printf -v gap '%*s' "$available" ''
+      row="${row}${gap}${description}"
     fi
     row="$(tui_crop "$row" "$width")"
     if ((index == selected)); then printf '%s%-*s%s\n' "$TUI_SELECTED" "$width" "$row" "$TUI_RESET"; else printf '%-*s\n' "$width" "$row"; fi
@@ -947,31 +1254,210 @@ tui_render_components() {
 }
 
 tui_select_components() {
-  local selected=0 key original="$TUI_FEATURES_JSON"
-  local TUI_COMPONENT_NOTICE='Changing an existing deployment requires Recreate.'
+  local selected=0 key original="$TUI_FEATURES_JSON" count dirty=false
+  local TUI_COMPONENT_NOTICE='An asterisk marks a component that differs from the saved deployment.'
   local -a TUI_COMPONENT_KEYS=(multitenancy roles environments groups policies automation catalog)
+  local TUI_COMPONENT_KEYS_JSON
   local -a TUI_COMPONENT_LABELS=('Multitenancy' 'Persona roles & users' 'Environments' 'Groups' 'Policies' 'Automation' 'Service catalog')
   local -a TUI_COMPONENT_HINTS=('Tenant and tenant role' 'Admin, operator and consumer personas' 'Development, staging and production' 'Development and production scopes' 'MOTD, naming, expiry and Cypher' 'Input, task and workflow' 'Self-service catalog item')
+  count="${#TUI_COMPONENT_KEYS[@]}"
+  TUI_COMPONENT_KEYS_JSON="$(printf '%s\n' "${TUI_COMPONENT_KEYS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
   while true; do
-    tui_render_components "$selected"; key="$(tui_read_key)"
+    if [[ "$dirty" == true ]]; then
+      tui_sync_manifest >/dev/null 2>&1 || true
+      dirty=false
+    fi
+    tui_render_components "$selected"
+    key="$(tui_read_key)"
     case "$key" in
-      up | k) selected=$(((selected + 6) % 7)) ;;
-      down | j) selected=$(((selected + 1) % 7)) ;;
-      ' ') tui_toggle_component "${TUI_COMPONENT_KEYS[$selected]}" ;;
-      a) TUI_FEATURES_JSON="$(feature_defaults)"; TUI_COMPONENT_NOTICE='All deployment components selected.' ;;
-      n) TUI_FEATURES_JSON='{"multitenancy":false,"roles":false,"environments":false,"groups":false,"policies":false,"automation":false,"catalog":false}'; TUI_COMPONENT_NOTICE='All deployment components cleared.' ;;
-      enter) TUI_LAST_RESULT="Components saved: $(tui_selected_feature_count)/7 selected"; return 0 ;;
-      q | escape) TUI_FEATURES_JSON="$original"; TUI_LAST_RESULT='Component selection cancelled'; return 0 ;;
+      up | k) selected=$(((selected + count - 1) % count)) ;;
+      down | j) selected=$(((selected + 1) % count)) ;;
+      home) selected=0 ;;
+      end) selected=$((count - 1)) ;;
+      ' ') tui_toggle_component "${TUI_COMPONENT_KEYS[$selected]}"; dirty=true ;;
+      a)
+        TUI_FEATURES_JSON="$(feature_defaults | jq -Sc .)"
+        TUI_COMPONENT_NOTICE='All deployment components selected.'
+        dirty=true
+        ;;
+      n)
+        TUI_FEATURES_JSON="$(jq -Sc 'map_values(false)' <<<"$(feature_defaults)")"
+        TUI_COMPONENT_NOTICE='All deployment components cleared.'
+        dirty=true
+        ;;
+      enter)
+        tui_sync_manifest || true
+        TUI_LAST_RESULT="Components saved: $(tui_selected_feature_count)/$(feature_total) selected"
+        return 0
+        ;;
+      q | escape)
+        TUI_FEATURES_JSON="$original"
+        tui_sync_manifest || true
+        TUI_LAST_RESULT='Component selection cancelled'
+        return 0
+        ;;
+    esac
+  done
+}
+
+# Lists the deployments recorded in the state directory. Each state file embeds
+# the manifest it was built from, so a saved deployment can be selected in the
+# TUI without the operator still holding its manifest file.
+tui_saved_demos() {
+  local file
+  [[ -d "$LEROY_STATE_DIR" ]] || return 0
+  for file in "$LEROY_STATE_DIR"/*.json; do
+    [[ -r "$file" ]] || continue
+    jq -e '.stateVersion == 1 and (.manifest.metadata.id | type == "string")' "$file" >/dev/null 2>&1 || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$(jq -r '.manifest.metadata.id' "$file")" \
+      "$file" \
+      "$(jq -c '.manifest' "$file" | resource_count)" \
+      "$(jq -r '.resources | length' "$file")" \
+      "$(jq -r '.applianceUrl // ""' "$file")"
+  done
+}
+
+tui_use_preset() {
+  TUI_MANIFEST_FILE=""
+  TUI_MANIFEST_ORIGIN=""
+  TUI_MANIFEST_KIND='preset'
+  TUI_MANIFEST_LABEL='Built-in preset'
+  TUI_FEATURES_JSON="$(feature_defaults)"
+}
+
+tui_use_manifest_file() {
+  local path="$1"
+  TUI_MANIFEST_FILE="$path"
+  TUI_MANIFEST_ORIGIN="$path"
+  TUI_MANIFEST_KIND='file'
+  TUI_MANIFEST_LABEL="${path##*/}"
+  TUI_FEATURES_JSON="$(manifest_features "$path" 2>/dev/null | jq -Sc . 2>/dev/null || feature_defaults)"
+}
+
+tui_use_saved_demo() {
+  local state="$1" temp
+  temp="$(mktemp "${TMPDIR:-/tmp}/leroy-saved.XXXXXX")" || return "$EXIT_API"
+  jq -S '.manifest' "$state" >"$temp" || { rm -f "$temp"; return "$EXIT_RESPONSE"; }
+  [[ -z "$TUI_MANIFEST_TEMP" ]] || rm -f "$TUI_MANIFEST_TEMP"
+  TUI_MANIFEST_TEMP="$temp"
+  TUI_MANIFEST_FILE="$temp"
+  TUI_MANIFEST_ORIGIN="$state"
+  TUI_MANIFEST_KIND='saved'
+  TUI_MANIFEST_LABEL='Saved deployment'
+  TUI_FEATURES_JSON="$(manifest_features "$temp" | jq -Sc .)"
+}
+
+tui_render_manifest_sources() {
+  local selected="$1" width index row hint available gap marker
+  width="$(tui_columns)"
+  tui_clear
+  printf '%s%s  MANIFEST SOURCE%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$TUI_RESET"
+  tui_rule "$width"
+  printf '  %s\n\n' "$(tui_crop 'The selected source drives the demo ID, the components, and every action.' "$((width - 2))")"
+  for index in "${!TUI_SOURCE_LABELS[@]}"; do
+    if [[ "${TUI_SOURCE_ORIGINS[$index]}" == "$TUI_MANIFEST_ORIGIN" ]]; then marker='o'; else marker=' '; fi
+    row="  (${marker}) ${TUI_SOURCE_LABELS[$index]}"
+    hint="${TUI_SOURCE_HINTS[$index]}"
+    if ((width >= 76)) && [[ -n "$hint" ]]; then
+      available=$((width - ${#row} - ${#hint} - 2))
+      ((available < 1)) && available=1
+      printf -v gap '%*s' "$available" ''
+      row="${row}${gap}${hint}"
+    fi
+    row="$(tui_crop "$row" "$width")"
+    if ((index == selected)); then printf '%s%-*s%s\n' "$TUI_SELECTED" "$width" "$row" "$TUI_RESET"; else printf '%-*s\n' "$width" "$row"; fi
+  done
+  printf '\n%s  %s%s\n' "$TUI_WARNING" "$(tui_crop "$TUI_SOURCE_NOTICE" "$((width - 2))")" "$TUI_RESET"
+  printf '%s  Enter select  Esc cancel%s\n' "$TUI_DIM" "$TUI_RESET"
+}
+
+tui_prompt_manifest_path() {
+  local path
+  tui_action_header 'Manifest file'
+  printf 'Enter a manifest path, or leave it empty to cancel.\n\n> '
+  printf '\033[?25h'
+  IFS= read -r path || path=''
+  printf '\033[?25l'
+  [[ -n "$path" ]] || return 1
+  if [[ ! -r "$path" ]]; then
+    TUI_LAST_RESULT="Manifest is not readable: $path"
+    printf '\n%sManifest file is not readable: %s%s\n' "$TUI_DANGER" "$path" "$TUI_RESET"
+    tui_wait
+    return 1
+  fi
+  printf '%s\n' "$path"
+}
+
+tui_select_manifest() {
+  local selected=0 key count index id state expected recorded appliance
+  local previous_file="$TUI_MANIFEST_FILE" previous_origin="$TUI_MANIFEST_ORIGIN"
+  local previous_kind="$TUI_MANIFEST_KIND" previous_label="$TUI_MANIFEST_LABEL"
+  local previous_features="$TUI_FEATURES_JSON" path
+  local TUI_SOURCE_NOTICE='Saved deployments are read from the state directory.'
+  local -a TUI_SOURCE_LABELS=('Built-in preset') TUI_SOURCE_HINTS=('') TUI_SOURCE_KINDS=(preset) TUI_SOURCE_ORIGINS=('')
+  TUI_SOURCE_HINTS[0]="$(preset_manifest | resource_count) resources"
+  while IFS=$'\t' read -r id state expected recorded appliance; do
+    [[ -n "$id" ]] || continue
+    TUI_SOURCE_LABELS+=("$id")
+    TUI_SOURCE_KINDS+=(saved)
+    TUI_SOURCE_ORIGINS+=("$state")
+    if [[ -n "$appliance" && "$appliance" != "$MORPHEUS_URL" ]]; then
+      TUI_SOURCE_HINTS+=("${recorded}/${expected} recorded, other appliance")
+    else
+      TUI_SOURCE_HINTS+=("${recorded}/${expected} recorded")
+    fi
+  done < <(tui_saved_demos)
+  TUI_SOURCE_LABELS+=('Manifest file...')
+  TUI_SOURCE_KINDS+=(file)
+  TUI_SOURCE_ORIGINS+=($'\x01none')
+  TUI_SOURCE_HINTS+=('Type a path')
+  count="${#TUI_SOURCE_LABELS[@]}"
+  for index in "${!TUI_SOURCE_ORIGINS[@]}"; do
+    [[ "${TUI_SOURCE_ORIGINS[$index]}" == "$TUI_MANIFEST_ORIGIN" ]] && selected="$index"
+  done
+  while true; do
+    tui_render_manifest_sources "$selected"
+    key="$(tui_read_key)"
+    case "$key" in
+      up | k) selected=$(((selected + count - 1) % count)) ;;
+      down | j) selected=$(((selected + 1) % count)) ;;
+      home) selected=0 ;;
+      end) selected=$((count - 1)) ;;
+      q | escape) TUI_LAST_RESULT='Manifest source unchanged'; return 0 ;;
+      enter)
+        case "${TUI_SOURCE_KINDS[$selected]}" in
+          preset) tui_use_preset ;;
+          saved) tui_use_saved_demo "${TUI_SOURCE_ORIGINS[$selected]}" || { TUI_SOURCE_NOTICE='That saved deployment could not be read.'; continue; } ;;
+          file)
+            path="$(tui_prompt_manifest_path)" || { TUI_SOURCE_NOTICE='No manifest file was selected.'; continue; }
+            tui_use_manifest_file "$path"
+            ;;
+        esac
+        if tui_sync_manifest; then
+          TUI_LAST_RESULT="Manifest source: ${TUI_MANIFEST_LABEL} (${TUI_DEMO_ID})"
+          return 0
+        fi
+        TUI_MANIFEST_FILE="$previous_file"
+        TUI_MANIFEST_ORIGIN="$previous_origin"
+        TUI_MANIFEST_KIND="$previous_kind"
+        TUI_MANIFEST_LABEL="$previous_label"
+        TUI_FEATURES_JSON="$previous_features"
+        tui_sync_manifest || true
+        TUI_SOURCE_NOTICE='That manifest is invalid; the previous source is still active.'
+        ;;
     esac
   done
 }
 
 tui_menu_row() {
-  local index="$1" selected="$2" width="$3" key label hint lead text available gap
-  key="${TUI_KEYS[$index]}"; label="${TUI_LABELS[$index]}"; hint="${TUI_HINTS[$index]}"
+  local index="$1" selected="$2" width="$3" show_hint="$4" key label hint lead text available gap
+  key="${TUI_KEYS[$index]}"
+  label="${TUI_LABELS[$index]}"
+  hint="${TUI_HINTS[$index]}"
   if ((index == selected)); then lead=' > '; else lead='   '; fi
   text="${lead}[${key}] ${label}"
-  if ((width >= 76)); then
+  if [[ "$show_hint" == true ]] && ((width >= 76)) && [[ -n "$hint" ]]; then
     available=$((width - ${#text} - ${#hint} - 2))
     ((available < 1)) && available=1
     printf -v gap '%*s' "$available" ''
@@ -983,33 +1469,31 @@ tui_menu_row() {
 }
 
 tui_render() {
-  local selected="$1" width endpoint state header
-  width="$(tui_columns)"; endpoint="${MORPHEUS_URL:-Not configured}"; state="$(tui_state_summary)"
+  local selected="$1" width height items compact=false index group previous='' manifest
+  width="$(tui_columns)"
+  height="$(tui_lines)"
+  items="${#TUI_KEYS[@]}"
+  ((height >= items + 16)) || compact=true
+  manifest="$TUI_MANIFEST_LABEL"
+  [[ "$TUI_DEMO_ID" == "" ]] || manifest="${manifest} (${TUI_DEMO_ID})"
   tui_clear
-  header="  LEROY ${LEROY_VERSION}  Morpheus 9 demo builder"
-  printf '%s%s%s%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$(tui_crop "$header" "$width")" "$TUI_RESET"
+  printf '%s%s%s%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$(tui_crop "  LEROY ${LEROY_VERSION}  Morpheus 9 demo builder" "$width")" "$TUI_RESET"
   tui_rule "$width"
-  printf '  %-14s %s\n' 'Appliance' "$(tui_crop "$endpoint" "$((width - 18))")"
-  printf '  %-14s %s\n' 'Connection' "$TUI_CONNECTION_STATE"
-  printf '  %-14s %s\n' 'Components' "$(tui_selected_feature_count)/7 selected"
-  printf '  %-14s %s\n' 'Demo' "$state"
+  printf '  %-14s %s\n' 'Appliance' "$(tui_crop "${MORPHEUS_URL:-Not configured}" "$((width - 18))")"
+  printf '  %-14s %s\n' 'Connection' "$(tui_crop "$TUI_CONNECTION_STATE" "$((width - 18))")"
+  printf '  %-14s %s\n' 'Manifest' "$(tui_crop "$manifest" "$((width - 18))")"
+  printf '  %-14s %s\n' 'Components' "$(tui_crop "$(tui_component_summary)" "$((width - 18))")"
+  printf '  %-14s %s\n' 'Demo' "$(tui_crop "$(tui_state_summary)" "$((width - 18))")"
   printf '  %-14s %s\n' 'Last result' "$(tui_crop "$TUI_LAST_RESULT" "$((width - 18))")"
   tui_rule "$width"
-  printf '%s  INSPECT%s\n' "$TUI_MUTED" "$TUI_RESET"
-  tui_menu_row 0 "$selected" "$width"
-  tui_menu_row 1 "$selected" "$width"
-  printf '%s  BUILD%s\n' "$TUI_MUTED" "$TUI_RESET"
-  tui_menu_row 2 "$selected" "$width"
-  printf '%s  VALIDATE%s\n' "$TUI_MUTED" "$TUI_RESET"
-  tui_menu_row 3 "$selected" "$width"
-  tui_menu_row 4 "$selected" "$width"
-  printf '%s  LIFECYCLE%s\n' "$TUI_MUTED" "$TUI_RESET"
-  tui_menu_row 5 "$selected" "$width"
-  tui_menu_row 6 "$selected" "$width"
-  printf '%s  CONFIGURE%s\n' "$TUI_MUTED" "$TUI_RESET"
-  tui_menu_row 7 "$selected" "$width"
-  tui_menu_row 8 "$selected" "$width"
-  tui_menu_row 9 "$selected" "$width"
+  for index in "${!TUI_KEYS[@]}"; do
+    group="${TUI_GROUPS[$index]}"
+    if [[ "$compact" != true && "$group" != "$previous" ]]; then
+      printf '%s  %s%s\n' "$TUI_MUTED" "$group" "$TUI_RESET"
+    fi
+    previous="$group"
+    tui_menu_row "$index" "$selected" "$width" "$([[ "$compact" == true ]] && printf 'false' || printf 'true')"
+  done
   if ((width < 60)); then
     printf '%s  j/k move  Enter select  q quit%s\n' "$TUI_DIM" "$TUI_RESET"
   else
@@ -1017,14 +1501,34 @@ tui_render() {
   fi
 }
 
+# Recognizes complete escape sequences so an unmapped special key is ignored
+# instead of leaking its tail into the next read or quitting the dashboard.
 tui_read_key() {
-  local key rest=''
-  IFS= read -rsn1 key || key='q'
+  local key sequence='' char
+  IFS= read -rsn1 key || { printf 'q\n'; return 0; }
   if [[ "$key" == $'\033' ]]; then
-    IFS= read -rsn2 -t 0.1 rest || true
-    case "$rest" in '[A' | OA) key='up' ;; '[B' | OB) key='down' ;; *) key='escape' ;; esac
-  elif [[ -z "$key" ]]; then key='enter'
-  else key="${key,,}"; fi
+    if ! IFS= read -rsn1 -t 0.05 char; then printf 'escape\n'; return 0; fi
+    if [[ "$char" != '[' && "$char" != 'O' ]]; then printf 'unknown\n'; return 0; fi
+    while IFS= read -rsn1 -t 0.05 char; do
+      sequence+="$char"
+      if [[ "$char" == [A-Za-z~] ]]; then break; fi
+    done
+    case "$sequence" in
+      A) key='up' ;;
+      B) key='down' ;;
+      C) key='right' ;;
+      D) key='left' ;;
+      H | '1~' | '7~') key='home' ;;
+      F | '4~' | '8~') key='end' ;;
+      '5~') key='pageup' ;;
+      '6~') key='pagedown' ;;
+      *) key='unknown' ;;
+    esac
+  elif [[ -z "$key" ]]; then
+    key='enter'
+  else
+    key="${key,,}"
+  fi
   printf '%s\n' "$key"
 }
 
@@ -1035,43 +1539,242 @@ tui_wait() {
 
 tui_action_header() {
   local title="$1" width
-  width="$(tui_columns)"; tui_clear
+  width="$(tui_columns)"
+  tui_clear
   printf '%s%s  %s%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$title" "$TUI_RESET"
   tui_rule "$width"
   printf '\n'
 }
 
+# Scrolls action output that does not fit the terminal instead of relying on
+# scrollback, which the alternate screen does not keep.
+tui_pager() {
+  local file="$1" title="$2" top=0 total height width key last shown
+  total="$(wc -l <"$file")"
+  while true; do
+    width="$(tui_columns)"
+    height=$(($(tui_lines) - 5))
+    ((height >= 3)) || height=3
+    last=$((total - height))
+    ((last >= 0)) || last=0
+    ((top <= last)) || top=$last
+    tui_clear
+    printf '%s%s  %s%s\n' "$TUI_ACCENT" "$TUI_BOLD" "$title" "$TUI_RESET"
+    tui_rule "$width"
+    sed -n "$((top + 1)),$((top + height))p" "$file" | while IFS= read -r shown; do
+      printf '%s\n' "$(tui_crop "$shown" "$width")"
+    done
+    tui_rule "$width"
+    shown=$((top + height))
+    ((shown <= total)) || shown=$total
+    printf '%s  lines %s-%s of %s   j/k scroll   Space page   q close%s\n' "$TUI_DIM" "$((top + 1))" "$shown" "$total" "$TUI_RESET"
+    key="$(tui_read_key)"
+    case "$key" in
+      down | j) if ((top < last)); then top=$((top + 1)); fi ;;
+      up | k) if ((top > 0)); then top=$((top - 1)); fi ;;
+      ' ' | pagedown) top=$((top + height)) ;;
+      pageup) top=$((top - height)); ((top >= 0)) || top=0 ;;
+      home | g) top=0 ;;
+      end) top=$last ;;
+      q | escape | enter) return 0 ;;
+    esac
+  done
+}
+
+# Runs an action with live output and a copy on disk for scrolling. The copy is
+# made through a FIFO rather than a pipeline, because a pipeline would run the
+# action in a subshell and discard the session state it updates.
+# Runs a command with live output and a copy in "$1" for scrolling, and returns
+# the command's status. The copy is made through a FIFO rather than a pipeline,
+# because a pipeline would run the command in a subshell and discard the session
+# state it updates. An empty path, or no mkfifo, means live output only.
+tui_capture() {
+  local output="$1" rc=0 fifo="" tee_pid
+  shift
+  if [[ -n "$output" ]] && command -v mkfifo >/dev/null 2>&1; then
+    fifo="${output}.fifo"
+    mkfifo -m 600 "$fifo" 2>/dev/null || fifo=""
+  fi
+  if [[ -n "$fifo" ]]; then
+    tee "$output" <"$fifo" &
+    tee_pid=$!
+    "$@" >"$fifo" 2>&1 || rc=$?
+    wait "$tee_pid" 2>/dev/null || true
+    rm -f "$fifo"
+  else
+    "$@" || rc=$?
+  fi
+  return "$rc"
+}
+
+tui_capture_file() {
+  local file
+  command -v mkfifo >/dev/null 2>&1 || return 0
+  file="$(mktemp "${TMPDIR:-/tmp}/leroy-output.XXXXXX")" || return 0
+  printf '%s\n' "$file"
+}
+
+tui_output_exceeds_screen() {
+  local output="$1" visible
+  [[ -n "$output" && -r "$output" ]] || return 1
+  visible=$(($(tui_lines) - 7))
+  ((visible >= 1)) || visible=1
+  (($(wc -l <"$output") > visible))
+}
+
+tui_finish_output() {
+  local output="$1" title="$2"
+  if tui_output_exceeds_screen "$output"; then
+    printf '\n%sOutput is longer than this screen. Press any key to scroll it.%s' "$TUI_DIM" "$TUI_RESET"
+    IFS= read -rsn1 _ || true
+    tui_pager "$output" "$title"
+  else
+    tui_wait
+  fi
+  [[ -z "$output" ]] || rm -f "$output"
+}
+
 tui_run_action() {
-  local title="$1" rc
-  shift; tui_action_header "$title"
+  local title="$1" rc=0 output
+  shift
+  tui_action_header "$title"
   printf '%sRunning...%s\n\n' "$TUI_DIM" "$TUI_RESET"
-  if "$@"; then
-    rc=0; TUI_LAST_RESULT="Success: $title"
+  output="$(tui_capture_file)"
+  tui_capture "$output" "$@" || rc=$?
+  TUI_LAST_RC="$rc"
+  TUI_LAST_FORCEABLE=false
+  [[ -z "$output" ]] || ! grep -q -- '--force' "$output" || TUI_LAST_FORCEABLE=true
+  if ((rc == 0)); then
+    TUI_LAST_RESULT="Success: $title"
+    [[ -z "$output" ]] || printf '\nCompleted successfully.\n' >>"$output"
     printf '\n%sCompleted successfully.%s\n' "$TUI_SUCCESS" "$TUI_RESET"
   else
-    rc=$?; TUI_LAST_RESULT="Failed ($rc): $title"
+    TUI_LAST_RESULT="Failed ($rc): $title"
+    [[ -z "$output" ]] || printf '\nAction failed with exit code %s.\n' "$rc" >>"$output"
     printf '\n%sAction failed with exit code %s.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
   fi
-  tui_wait
+  tui_finish_output "$output" "$title"
+  tui_sync_manifest >/dev/null 2>&1 || true
   return 0
 }
 
 tui_status_action() {
-  if status_command; then TUI_CONNECTION_STATE='Connected'; return 0; fi
-  TUI_CONNECTION_STATE='Connection failed'; return 1
+  local response rc=0
+  response="$(api_request GET '/api/whoami' '' "$MASTER_TOKEN")" || rc=$?
+  if ((rc != 0)); then
+    TUI_CONNECTION_STATE="Not reachable (exit ${rc})"
+    TUI_IDENTITY=''
+    TUI_BUILD=''
+    return "$rc"
+  fi
+  tui_apply_identity "$response"
+  printf 'Appliance:    %s\n' "$MORPHEUS_URL"
+  printf 'Identity:     %s\n' "$TUI_IDENTITY"
+  printf 'Build:        %s\n' "${TUI_BUILD:-unknown}"
+  printf 'Master admin: %s\n' "$(jq -r 'if .isMasterAccount == true then "yes" else "no" end' <<<"$response")"
+  printf 'Tenant:       %s\n' "$(jq -r '.user.account.name // .account.name // "unknown"' <<<"$response")"
+  printf 'TLS verify:   %s\n' "$MORPHEUS_VERIFY_TLS"
 }
 
-tui_plan_action() { manifest_to_temp && demo_plan; }
-tui_apply_action() { manifest_to_temp && demo_apply; }
-tui_verify_action() { manifest_to_temp && preflight && state_assert_appliance && demo_verify false; }
-tui_deep_verify_action() { manifest_to_temp && preflight && state_assert_appliance && demo_verify true; }
+tui_plan_action() { tui_sync_manifest && demo_plan; }
+tui_apply_action() { tui_sync_manifest && demo_apply; }
+tui_verify_action() { tui_sync_manifest && preflight && state_assert_appliance && demo_verify false; }
+tui_deep_verify_action() { tui_sync_manifest && preflight && state_assert_appliance && demo_verify true; }
+tui_inventory_action() { tui_sync_manifest && demo_state_report; }
+
+tui_plan_counts() {
+  awk '
+    $1 == "create" || $1 == "update" || $1 == "adopt" || $1 == "unchanged" || $1 == "conflict" { count[$1]++ }
+    END { printf "%d %d %d %d %d\n", count["create"] + 0, count["update"] + 0, count["adopt"] + 0, count["unchanged"] + 0, count["conflict"] + 0 }
+  ' "$1"
+}
+
+# Build previews the plan and asks for confirmation before it mutates Morpheus,
+# so the operator sees what an apply will do while it can still be refused.
+tui_build_screen() {
+  local rc=0 output key created updated adopted unchanged conflicts mutations
+  tui_action_header 'Build selected demo'
+  printf '%sPreviewing changes...%s\n\n' "$TUI_DIM" "$TUI_RESET"
+  output="$(tui_capture_file)"
+  tui_capture "$output" tui_plan_action || rc=$?
+  TUI_LAST_RC="$rc"
+  if ((rc != 0)); then
+    TUI_LAST_RESULT="Failed ($rc): Preview before build"
+    printf '\n%sPreview failed with exit code %s. Nothing was changed.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
+    tui_finish_output "$output" 'Preview before build'
+    return 0
+  fi
+  if tui_output_exceeds_screen "$output"; then
+    printf '\n%sThe plan is longer than this screen. Press any key to review it.%s' "$TUI_DIM" "$TUI_RESET"
+    IFS= read -rsn1 _ || true
+    tui_pager "$output" 'Plan before build'
+    tui_action_header 'Build selected demo'
+  fi
+  created=0 updated=0 adopted=0 unchanged=0 conflicts=0
+  if [[ -n "$output" && -r "$output" ]]; then
+    read -r created updated adopted unchanged conflicts < <(tui_plan_counts "$output") || true
+  fi
+  rm -f "$output"
+  mutations=$((created + updated + adopted))
+  printf '\n%sPlan: %s create, %s update, %s adopt, %s unchanged%s\n' \
+    "$TUI_BOLD" "$created" "$updated" "$adopted" "$unchanged" "$TUI_RESET"
+  if ((conflicts > 0)); then
+    printf '%s%s conflicting resource(s); build would stop.%s\n' "$TUI_DANGER" "$conflicts" "$TUI_RESET"
+  elif ((mutations == 0)); then
+    printf '%sNothing to create or update. Building only reapplies role and catalog access.%s\n' "$TUI_DIM" "$TUI_RESET"
+  fi
+  printf '\nBuild %s on %s?\n' "$TUI_DEMO_ID" "$(tui_crop "$MORPHEUS_URL" 60)"
+  printf '%sPress y to build, any other key to cancel.%s\n\n> ' "$TUI_DIM" "$TUI_RESET"
+  key="$(tui_read_key)"
+  if [[ "$key" != y ]]; then
+    TUI_LAST_RESULT='Build cancelled at the preview'
+    printf '\n%sCancelled. Nothing was changed.%s\n' "$TUI_WARNING" "$TUI_RESET"
+    tui_wait
+    return 0
+  fi
+  tui_run_action 'Build selected demo' tui_apply_action
+}
+
+# A destroy that stops on an ownership mismatch can be retried with force, which
+# still refuses any resource that carries no Leroy identity at all.
+tui_force_retry() {
+  local title="$1" typed
+  shift
+  ((TUI_LAST_RC == EXIT_CONFLICT)) || return 0
+  [[ "$TUI_LAST_FORCEABLE" == true ]] || return 0
+  tui_action_header "$title"
+  printf '%sA resource no longer matches the ownership marker Leroy recorded.%s\n\n' "$TUI_WARNING" "$TUI_RESET"
+  printf 'Forcing removes resources that still carry a Leroy identity but whose\n'
+  printf 'marker has changed. A resource with no Leroy identity is never removed.\n\n'
+  printf 'Type %sforce%s to continue, or anything else to stop:\n\n> ' "$TUI_BOLD" "$TUI_RESET"
+  printf '\033[?25h'
+  IFS= read -r typed || true
+  printf '\033[?25l'
+  if [[ "$typed" != force ]]; then
+    TUI_LAST_RESULT="Cancelled: $title"
+    printf '\n%sNothing further was changed.%s\n' "$TUI_WARNING" "$TUI_RESET"
+    tui_wait
+    return 0
+  fi
+  tui_run_action "$title (forced)" "$@"
+}
+
+tui_destroy_phrase() {
+  if [[ -n "$TUI_STATE_FILE" && -r "$TUI_STATE_FILE" ]]; then
+    jq -r '.manifest.metadata.name' "$TUI_STATE_FILE"
+  else
+    printf '%s' "$TUI_DEMO_NAME"
+  fi
+}
 
 tui_confirm() {
   local title="$1" phrase="$2" detail="$3" typed
   tui_action_header "$title"
   printf '%s%s%s\n\n' "$TUI_WARNING" "$detail" "$TUI_RESET"
   printf 'This operation is protected. Type the organization name exactly:\n\n  %s%s%s\n\n> ' "$TUI_BOLD" "$phrase" "$TUI_RESET"
-  printf '\033[?25h'; IFS= read -r typed || true; printf '\033[?25l'
+  printf '\033[?25h'
+  IFS= read -r typed || true
+  printf '\033[?25l'
   if [[ "$typed" == "$phrase" ]]; then return 0; fi
   TUI_LAST_RESULT="Cancelled: $title"
   printf '\n%sConfirmation did not match. Nothing was changed.%s\n' "$TUI_WARNING" "$TUI_RESET"
@@ -1079,58 +1782,123 @@ tui_confirm() {
   return 1
 }
 
-tui_destroy_action() { demo_destroy leroy-demo true false; }
-tui_recreate_action() { demo_destroy leroy-demo true false && manifest_to_temp && demo_apply; }
-tui_wizard_action() {
-  local rc
+tui_destroy_action() { demo_destroy "$TUI_DEMO_ID" true false; }
+tui_destroy_force_action() { demo_destroy "$TUI_DEMO_ID" true true; }
+tui_recreate_action() { demo_destroy "$TUI_DEMO_ID" true false && tui_sync_manifest && demo_apply; }
+tui_recreate_force_action() { demo_destroy "$TUI_DEMO_ID" true true && tui_sync_manifest && demo_apply; }
+
+# The wizard is interactive and refuses a non-terminal stdout, so it runs on its
+# own screen instead of through the captured action runner.
+tui_wizard_screen() {
+  local rc=0
+  tui_action_header 'Create custom manifest'
+  LAST_WIZARD_FILE=""
   printf '\033[?25h'
-  if wizard_manifest; then rc=0; else rc=$?; fi
+  wizard_manifest || rc=$?
   printf '\033[?25l'
-  return "$rc"
+  if ((rc != 0)); then
+    TUI_LAST_RESULT="Failed ($rc): Create custom manifest"
+    printf '\n%sThe wizard failed with exit code %s.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
+  elif [[ -z "$LAST_WIZARD_FILE" || ! -r "$LAST_WIZARD_FILE" ]]; then
+    TUI_LAST_RESULT='Manifest was not saved'
+  else
+    tui_use_manifest_file "$LAST_WIZARD_FILE"
+    if tui_sync_manifest; then
+      TUI_LAST_RESULT="Manifest saved and activated: ${TUI_MANIFEST_LABEL}"
+      printf '\n%sThe saved manifest is now the active TUI source (demo %s).%s\n' "$TUI_SUCCESS" "$TUI_DEMO_ID" "$TUI_RESET"
+    else
+      TUI_LAST_RESULT='Saved manifest was rejected'
+    fi
+  fi
+  tui_wait
+  return 0
+}
+
+tui_requires_state() {
+  local title="$1"
+  [[ -n "$TUI_STATE_FILE" && -r "$TUI_STATE_FILE" ]] && return 0
+  TUI_LAST_RESULT="${title}: no saved deployment for ${TUI_DEMO_ID}"
+  return 1
 }
 
 run_tui() {
   [[ -t 0 && -t 1 ]] || { die "$EXIT_USAGE" 'TUI requires an interactive terminal'; return; }
-  local selected=0 key index resources
-  local -a TUI_KEYS=(s p a v d r x c w q)
-  local -a TUI_LABELS=('Check connection' 'Preview plan' 'Build selected demo' 'Verify structure' 'Deep verification' 'Recreate selected demo' 'Destroy default demo' 'Select deployment components' 'Create custom manifest' 'Quit')
-  local -a TUI_HINTS=('Authenticate and inspect appliance' 'Show intended changes' '' 'Check resources and ownership' 'Test selected personas and workflow' 'Destroy, then rebuild selection' 'Remove owned demo resources' 'Choose platform capabilities' 'Guided JSON manifest wizard' 'Return to shell')
-  tui_init_palette; tui_load_features; tui_enter_screen
+  local selected=0 key index items
+  local -a TUI_KEYS=(s i p a v d r x c m w q)
+  local -a TUI_LABELS=(
+    'Check connection' 'Deployment inventory' 'Preview plan' 'Build selected demo'
+    'Verify structure' 'Deep verification' 'Recreate selected demo' 'Destroy selected demo'
+    'Select deployment components' 'Choose manifest source' 'Create custom manifest' 'Quit')
+  local -a TUI_GROUPS=(
+    INSPECT INSPECT INSPECT BUILD VALIDATE VALIDATE LIFECYCLE LIFECYCLE
+    CONFIGURE CONFIGURE CONFIGURE SESSION)
+  local -a TUI_HINTS=(
+    'Authenticate and inspect appliance' 'Show recorded resources and IDs' 'Show intended changes' ''
+    'Check resources and ownership' 'Test selected personas and workflow' 'Destroy, then rebuild selection' 'Remove owned demo resources'
+    'Choose platform capabilities' 'Preset or a manifest file' 'Guided JSON manifest wizard' 'Return to shell')
+  items="${#TUI_KEYS[@]}"
+  tui_init_palette
+  tui_bootstrap_manifest || return
+  tui_enter_screen
+  TUI_CONNECTION_STATE='Checking...'
+  tui_render "$selected"
+  tui_probe_connection || true
   while true; do
-    resources="$(feature_resource_count "$TUI_FEATURES_JSON")"; TUI_HINTS[2]="Create or resume ${resources} resources"
-    tui_render "$selected"; key="$(tui_read_key)"
+    TUI_HINTS[3]="Create or resume ${TUI_RESOURCE_COUNT} resources"
+    tui_render "$selected"
+    key="$(tui_read_key)"
     case "$key" in
-      up | k) selected=$(((selected + 9) % 10)); continue ;;
-      down | j) selected=$(((selected + 1) % 10)); continue ;;
+      up | k) selected=$(((selected + items - 1) % items)); continue ;;
+      down | j) selected=$(((selected + 1) % items)); continue ;;
+      home) selected=0; continue ;;
+      end) selected=$((items - 1)); continue ;;
       enter) index="$selected" ;;
-      s) index=0 ;; p) index=1 ;; a) index=2 ;; v) index=3 ;; d) index=4 ;;
-      r) index=5 ;; x) index=6 ;; c) index=7 ;; w) index=8 ;; q | escape) index=9 ;;
+      s) index=0 ;; i) index=1 ;; p) index=2 ;; a) index=3 ;; v) index=4 ;; d) index=5 ;;
+      r) index=6 ;; x) index=7 ;; c) index=8 ;; m) index=9 ;; w) index=10 ;;
+      q | escape) index=11 ;;
       *) continue ;;
     esac
     selected="$index"
     case "$index" in
       0) tui_run_action 'Connection status' tui_status_action ;;
-      1) tui_run_action 'Plan selected demo' tui_plan_action ;;
-      2) tui_run_action 'Build selected demo' tui_apply_action ;;
-      3) tui_run_action 'Verify demo structure' tui_verify_action ;;
-      4) tui_run_action 'Deep verification' tui_deep_verify_action ;;
+      1)
+        if tui_requires_state 'Deployment inventory'; then
+          tui_run_action 'Deployment inventory' tui_inventory_action
+        fi
+        ;;
+      2) tui_run_action 'Plan selected demo' tui_plan_action ;;
+      3) tui_build_screen ;;
+      4)
+        if tui_requires_state 'Verify demo structure'; then
+          tui_run_action 'Verify demo structure' tui_verify_action
+        fi
+        ;;
       5)
-        if tui_confirm 'Recreate selected demo' 'Leroy Demo Organization' 'All Leroy-owned demo resources will be deleted, then the current selection will be built.'; then
-          tui_run_action 'Recreate selected demo' tui_recreate_action
+        if tui_requires_state 'Deep verification'; then
+          tui_run_action 'Deep verification' tui_deep_verify_action
         fi
         ;;
       6)
-        if tui_confirm 'Destroy default demo' 'Leroy Demo Organization' 'All Leroy-owned demo resources will be permanently deleted.'; then
-          tui_run_action 'Destroy default demo' tui_destroy_action
+        if tui_requires_state 'Recreate selected demo' &&
+          tui_confirm 'Recreate selected demo' "$(tui_destroy_phrase)" "All Leroy-owned resources of ${TUI_DEMO_ID} will be deleted, then the current selection will be built."; then
+          tui_run_action 'Recreate selected demo' tui_recreate_action
+          tui_force_retry 'Recreate selected demo' tui_recreate_force_action
         fi
         ;;
-      7) tui_select_components ;;
-      8) tui_run_action 'Create custom manifest' tui_wizard_action ;;
-      9) tui_leave_screen; return 0 ;;
+      7)
+        if tui_requires_state 'Destroy selected demo' &&
+          tui_confirm 'Destroy selected demo' "$(tui_destroy_phrase)" "All Leroy-owned resources of ${TUI_DEMO_ID} will be permanently deleted."; then
+          tui_run_action 'Destroy selected demo' tui_destroy_action
+          tui_force_retry 'Destroy selected demo' tui_destroy_force_action
+        fi
+        ;;
+      8) tui_select_components ;;
+      9) tui_select_manifest ;;
+      10) tui_wizard_screen ;;
+      11) tui_leave_screen; return 0 ;;
     esac
   done
 }
-
 usage() {
   cat <<'EOF'
 Usage:
@@ -1138,11 +1906,15 @@ Usage:
   leroy.sh [global options] environments {list|get ID}
   leroy.sh demo preset
   leroy.sh demo wizard
+  leroy.sh [global options] demo list
+  leroy.sh [global options] demo state [--demo-id ID] [--file FILE]
   leroy.sh [global options] demo plan|apply|verify [--file FILE] [--deep]
   leroy.sh [global options] demo destroy --demo-id ID --yes [--force]
   leroy.sh [global options] demo recreate [--file FILE] --yes [--force]
 
 Global options: --config FILE, --output table|json, -h|--help, -V|--version
+
+demo list and demo state read local state only and need no appliance credentials.
 EOF
 }
 
@@ -1180,6 +1952,23 @@ main() {
 
   load_config "$config_file" || return
   [[ -z "$output_override" ]] || LEROY_OUTPUT="$output_override"
+
+  if [[ "$command" == demo ]]; then
+    case "$action" in
+      list)
+        require_command jq || return
+        demo_list
+        return
+        ;;
+      state)
+        require_command jq || return
+        if [[ -n "$manifest_file" ]]; then manifest_to_temp "$manifest_file" || return; else select_state "$demo_id" || return; fi
+        demo_state_report
+        return
+        ;;
+    esac
+  fi
+
   prompt_missing_runtime_config
   validate_runtime_config || return
 
@@ -1203,7 +1992,7 @@ main() {
           CURRENT_DEMO_ID="$demo_id"; CURRENT_MARKER="Managed by Leroy demo:${demo_id}"; STATE_FILE="${LEROY_STATE_DIR}/${demo_id}.json"
           demo_apply
           ;;
-        *) die "$EXIT_USAGE" 'usage: leroy.sh demo {preset|wizard|plan|apply|verify|destroy|recreate}' ;;
+        *) die "$EXIT_USAGE" 'usage: leroy.sh demo {preset|wizard|list|state|plan|apply|verify|destroy|recreate}' ;;
       esac
       ;;
     *) die "$EXIT_USAGE" "unknown command: $command" ;;

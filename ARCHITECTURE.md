@@ -67,7 +67,7 @@ Access tokens are read from `MORPHEUS_API_TOKEN`. They are deliberately excluded
 
 All requests pass through `api_request`. The transport layer joins the appliance URL with an `/api/...` path, adds bearer authentication and JSON headers, applies timeouts, separates response bodies from status codes, maps failures to application exit codes, and validates successful JSON responses.
 
-Resource functions understand Morpheus response shapes and select user-facing fields. Only `api_request` builds `curl` commands. Pagination will be implemented once and shared by TUI and CLI consumers.
+Resource functions understand Morpheus response shapes and select user-facing fields. Only `api_request` builds `curl` commands. Collection reads go through `api_collection`, which follows Morpheus `max`/`offset` pagination until a short page, detects the collection key from the first page when the caller does not name it, and returns one merged document. List commands, base-role discovery, policy-type resolution, and name lookups all use it, so no consumer is limited to the first page.
 
 Morpheus versions may differ in endpoint availability and payload shape. Version-specific behavior will be capability-driven where possible and documented in `API_REFERENCE.md`; it must not silently discard fields or retry a mutation.
 
@@ -76,6 +76,12 @@ Morpheus versions may differ in endpoint availability and payload shape. Version
 Running `leroy` or `leroy tui` starts a dependency-free, full-screen terminal adapter. It uses ANSI terminal capabilities and Bash character input instead of `dialog`, `whiptail`, or an ncurses binding, preserving the single-file distribution and the Bash, `curl`, and `jq` runtime baseline.
 
 The dashboard groups actions by operator intent: inspect, build, validate, lifecycle, and configure. Its component selector models seven feature bundles as checkboxes, defaults all of them on, and enforces dependency rules while toggling. It supports arrow keys, `j`/`k`, direct shortcuts, and `Enter`; the alternate screen and cursor are always restored through the process cleanup trap. Rendering is width-aware, respects `NO_COLOR`, and keeps action output on a dedicated result view until the operator dismisses it.
+
+The dashboard derives every row it shows from one source of truth: the manifest currently selected in the TUI. `tui_sync_manifest` rebuilds the effective manifest from the selected source plus the selected components, then republishes the demo ID, organization name, state file, and expected resource count that the rows and the lifecycle actions use. Resource totals come from expanding the manifest, not from per-bundle constants, so a customized manifest is described by its own contents. Actions that need saved state are offered only when that state exists, and destruction confirms with the organization name recorded in it.
+
+Interactive screens that read input, the wizard and the manifest and component selectors, run outside the captured action runner. The runner copies action output through a FIFO rather than a pipeline, because a pipeline runs the action in a subshell and discards the session state it updates; the wizard additionally requires a terminal on standard output.
+
+The manifest source is one of three kinds: the built-in preset, a manifest file, or a deployment recorded in the state directory. A saved deployment is used by extracting the manifest its state file embeds, so every source reduces to a manifest file and the rest of the TUI needs no special case. Building previews the plan and requires confirmation before it mutates anything, and a destroy that stops on an ownership mismatch offers a gated retry with force; that offer is made only when the failure names `--force` as the remedy, so failures force cannot resolve are not offered one.
 
 The TUI owns navigation, selection, human-readable tables, prompts, status summaries, and confirmation. It delegates all actual work to command functions. Mutating workflows follow a consistent sequence:
 
@@ -94,6 +100,10 @@ The manifest stores normalized feature flags for `multitenancy`, `roles`, `envir
 - service catalog requires automation.
 
 The feature filter runs before planning, so unselected resources never enter the desired-resource stream. When multitenancy is selected, tenant content uses a temporary tenant-admin token. When it is not selected, environments, groups, policies, automation, and catalog content use the Master Tenant token and payloads omit tenant-account references. The selected feature set is stored in lifecycle state; a later mismatch fails with exit code 8 and requires an explicit recreate.
+
+## Local state inspection
+
+`demo list` and `demo state` read the state directory only. They run after configuration is loaded, so `--config` selects the right state directory, but before credentials are required, because inspecting what Leroy recorded must not depend on a valid token. State holds resource identifiers, the manifest, and the appliance it belongs to; generated passwords stay in Cypher.
 
 ## CLI mode
 
@@ -118,10 +128,12 @@ Additional codes require documentation and tests before use.
 
 ## Testing strategy
 
-Fast tests mock `curl` and validate configuration, dispatch, request construction, response parsing, exit codes, and secret redaction. Contract fixtures will represent supported Morpheus response versions. Optional integration tests will run against an isolated test tenant and will never be part of the default test command.
+Fast tests mock `curl` and validate configuration, dispatch, request construction, response parsing, exit codes, secret redaction, manifest expansion, pagination, verification reporting, and terminal rendering. Contract fixtures will represent supported Morpheus response versions. Optional integration tests will run against an isolated test tenant and will never be part of the default test command.
+
+No automated test reaches a Morpheus appliance, so payload acceptance, endpoint availability, and demonstration behavior remain unproven until an operator runs the checklist in `docs/APPLIANCE_VALIDATION.md`. Every change that adds or alters an API interaction adds an entry there.
 
 CI performs Bash syntax checks, ShellCheck analysis, and Bats tests. Mutating API tests must use fixtures until an explicitly configured integration environment exists.
 
 ## Extension path
 
-New resources should be introduced by adding a command function, CLI route, TUI action, fixture set, tests, and API-reference entry. Cross-cutting behavior belongs in an existing shared layer rather than a new resource-specific transport implementation.
+New resources should be introduced by adding a command function, CLI route, TUI action, fixture set, tests, API-reference entry, and appliance-validation entry. Cross-cutting behavior belongs in an existing shared layer rather than a new resource-specific transport implementation.

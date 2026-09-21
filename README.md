@@ -83,13 +83,34 @@ Or request it explicitly:
 leroy tui
 ```
 
-The TUI exposes status, deployment-component selection, manifest generation, planning, application, structural and deep verification, recreation, and protected destruction.
+It runs in the terminal's alternate screen and needs no UI framework. Navigate with the arrow keys or `j`/`k`, press `Enter` to run the selected action, or use the displayed shortcut key. Press `q` or `Esc` to return to the shell. Keys the dashboard does not use, including function and navigation keys, are ignored rather than treated as `Esc`.
 
-Choose **Select deployment components** (shortcut `c`) to open a checkbox screen. All seven bundles are enabled initially: multitenancy, persona roles and users, environments, groups, policies, automation, and service catalog. Use the arrow keys or `j`/`k`, press `Space` to toggle, `a` to select all, `n` to clear all, `Enter` to save, or `Esc` to cancel. Dependencies are kept valid automatically: multitenancy and persona roles move together, policies require groups, and catalog requires automation. With multitenancy disabled, selected platform content is created in the Master Tenant instead.
+| Key | Action |
+| --- | --- |
+| `s` | Check connection and show identity, build, and tenant |
+| `i` | Deployment inventory: recorded resources and their Morpheus IDs |
+| `p` | Preview the plan for the current manifest and selection |
+| `a` | Build or resume the selected demo |
+| `v` | Verify structure and ownership |
+| `d` | Deep verification of personas and the workflow |
+| `r` | Recreate: destroy, then build the current selection |
+| `x` | Destroy the demo the dashboard is showing |
+| `c` | Select deployment components |
+| `m` | Choose the manifest source: preset, a saved deployment, or a file |
+| `w` | Create a custom manifest with the wizard |
+| `q` | Quit |
 
-It runs in the terminal's alternate screen and needs no UI framework. Navigate with the arrow keys or `j`/`k`, press `Enter` to run the selected action, or use the displayed shortcut key (`s`, `p`, `a`, `v`, `d`, `r`, `x`, `c`, or `w`). Press `q` or `Esc` to return to the shell. Action results remain visible until a key is pressed, and failures return to the dashboard instead of terminating the session.
+The dashboard reports the appliance, the connection and authenticated identity, the active manifest with its demo ID, the component selection, the state of that demo, and the result of the latest action. Every row describes the demo the actions will operate on, so switching the manifest source switches all of them together. Leroy checks the connection once when the TUI opens; an unreachable appliance is reported on the dashboard instead of blocking startup.
 
-The dashboard shows the configured appliance, connection status, local lifecycle state, and the result of the latest action. Destruction and recreation require the exact organization name before Leroy makes changes. Set `NO_COLOR=1` if the terminal should not emit color styling.
+Choose **Select deployment components** (`c`) to open a checkbox screen. All seven bundles are enabled initially: multitenancy, persona roles and users, environments, groups, policies, automation, and service catalog. Use the arrow keys or `j`/`k`, press `Space` to toggle, `a` to select all, `n` to clear all, `Enter` to save, or `Esc` to cancel. Dependencies are kept valid automatically: multitenancy and persona roles move together, policies require groups, and catalog requires automation. With multitenancy disabled, selected platform content is created in the Master Tenant instead. An asterisk marks a component that differs from the saved deployment, and the dashboard says when the selection needs a recreate.
+
+Choose **Choose manifest source** (`m`) to pick what the TUI operates on: the built-in preset, one of the deployments recorded in the state directory, or a manifest file you name. Every state file embeds the manifest it was built from, so a saved deployment can be selected without still having its manifest; a deployment recorded against a different appliance is labelled as such. A manifest saved by the wizard (`w`) becomes the active source automatically. An unreadable or invalid manifest is refused and the previous source is kept.
+
+**Build selected demo** (`a`) previews first: it runs the plan, lets you scroll it when it is longer than the screen, then reports how many resources it would create, update, and adopt, and asks for confirmation before anything is sent to Morpheus. A plan that reports conflicts fails the preview, so a build never starts over one.
+
+If destruction or recreation stops because a resource no longer matches the ownership marker Leroy recorded, the TUI offers to retry with force and requires you to type `force`. Forcing still refuses any resource that carries no Leroy identity at all. Failures for other reasons, such as state belonging to a different appliance, are not offered a retry, because forcing would not help.
+
+Inventory, verification, destruction, and recreation are only offered when a saved deployment exists for the active demo ID, and destruction and recreation require the exact organization name recorded in that state. Action output is shown while it runs; anything longer than the screen can be scrolled afterwards with `j`/`k`, `Space`, and `q`, because the alternate screen keeps no scrollback. Failures return to the dashboard instead of terminating the session. The dashboard fits an 80x24 terminal and drops its group headings when the terminal is shorter. Set `NO_COLOR=1` if the terminal should not emit color styling.
 
 ## Demo lifecycle
 
@@ -106,7 +127,7 @@ leroy demo plan
 leroy demo apply
 ```
 
-Use a custom manifest produced by the TUI wizard or edited from the preset:
+Use a custom manifest produced by the TUI wizard or edited from the preset. The wizard prints a summary of what it generated and writes the complete manifest to the file:
 
 ```bash
 leroy demo wizard
@@ -119,6 +140,26 @@ Verify resource ownership and configuration. Deep verification logs in temporari
 ```bash
 leroy demo verify --file custom-demo.json
 leroy demo verify --file custom-demo.json --deep
+```
+
+Verification reports one row per check so a failing run names what failed:
+
+```text
+RESULT  CHECK      TARGET
+pass    manifest   leroy-demo
+pass    resource   environment:Leroy Development
+fail    resource   group:Leroy Production (resource is missing on the appliance)
+3 checks, 1 failed
+```
+
+Use `--output json` for `{verified, checked, failed, checks[]}` instead.
+
+Inspect what Leroy recorded locally. Both commands read state only and need no appliance credentials:
+
+```bash
+leroy demo list
+leroy demo state --demo-id leroy-demo
+leroy --output json demo state --file custom-demo.json
 ```
 
 Destructive commands require explicit confirmation and only act on IDs in local state whose remote ownership marker also matches:
@@ -164,6 +205,12 @@ Use a non-default configuration file:
 leroy --config /secure/path/production.conf status
 ```
 
+List collections with pagination applied, so a result is not limited to the first page:
+
+```bash
+leroy --output json environments list | jq '.environments | length'
+```
+
 Run `leroy --help` for the currently implemented command surface. CLI output written to standard output is intended for consumers; diagnostics are written to standard error.
 
 ## Security model
@@ -180,7 +227,9 @@ make test       # bats test suite
 make format     # format Bash sources with shfmt
 ```
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`API_REFERENCE.md`](API_REFERENCE.md), and [`docs/FEEDBACK.md`](docs/FEEDBACK.md) for contribution workflow, design details, endpoint coverage, and field feedback.
+The automated suite never contacts a Morpheus appliance. [`docs/APPLIANCE_VALIDATION.md`](docs/APPLIANCE_VALIDATION.md) lists every behavior that stays unverified until it runs against one, with the checks to perform and the expected results.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`API_REFERENCE.md`](API_REFERENCE.md), [`docs/APPLIANCE_VALIDATION.md`](docs/APPLIANCE_VALIDATION.md), and [`docs/FEEDBACK.md`](docs/FEEDBACK.md) for contribution workflow, design details, endpoint coverage, appliance validation, and field feedback.
 
 ## Project status
 

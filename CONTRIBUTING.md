@@ -44,6 +44,8 @@ Run `make format` before submitting changes. Formatting should use the repositor
 
 Every behavior change should include or update a Bats test. Tests must not require a live Morpheus appliance. Mock `curl` responses and cover successful requests, error paths, malformed responses, configuration precedence, and safe handling of secrets and destructive-operation confirmation.
 
+No test reaches a Morpheus appliance, so a passing suite does not prove that Morpheus accepts a request. When a change adds or alters an API interaction, add an entry to `docs/APPLIANCE_VALIDATION.md` describing what an operator with appliance access must check and what the expected result is.
+
 Live integration tests, when added, will be opt-in and must target a dedicated non-production tenant. Before opening a pull request, run:
 
 ```bash
@@ -52,7 +54,7 @@ make check
 
 ## Documentation and compatibility
 
-Update the README and API reference whenever user-facing commands, configuration, dependencies, or supported endpoints change. Record notable changes under `Unreleased` in `CHANGELOG.md`.
+Update the README, API reference, and appliance-validation checklist whenever user-facing commands, configuration, dependencies, or supported endpoints change. Record notable changes under `Unreleased` in `CHANGELOG.md`.
 
 CLI flags, JSON fields, exit codes, and standard-output behavior form an automation contract. Backward-incompatible changes require explicit discussion and, after the project reaches `1.0.0`, a major version change.
 

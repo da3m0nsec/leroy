@@ -23,3 +23,7 @@ Keep all HTTP mechanics inside `api_request`; command functions should receive v
 ## Testing without Morpheus
 
 Put mock executables at the front of `PATH` when running the Bats suite. Fixtures must be synthetic or thoroughly sanitized. Never record a live `Authorization` header.
+
+Mocking `api_request` in a test proves request construction and response handling, not that Morpheus accepts the request. Record anything that only an appliance can settle in `APPLIANCE_VALIDATION.md` with an `AV-` identifier, the check to run, and the expected result.
+
+Terminal behavior is exercised by calling the rendering and input functions directly with `tput` stubbed. A pseudo-terminal harness is useful for whole-session checks, for example that an interactive screen still sees a terminal on standard output; those are not part of `make check`.
