@@ -112,6 +112,31 @@ If destruction or recreation stops because a resource no longer matches the owne
 
 Inventory, verification, destruction, and recreation are only offered when a saved deployment exists for the active demo ID, and destruction and recreation require the exact organization name recorded in that state. Action output is shown while it runs; anything longer than the screen can be scrolled afterwards with `j`/`k`, `Space`, and `q`, because the alternate screen keeps no scrollback. Failures return to the dashboard instead of terminating the session. The dashboard fits an 80x24 terminal and drops its group headings when the terminal is shorter. Set `NO_COLOR=1` if the terminal should not emit color styling.
 
+## Constructor gráfico de manifiestos
+
+`web/` contiene un constructor gráfico que genera manifiestos sin escribir JSON
+a mano. Se despliega en GitHub Pages y se ejecuta en local con `make web`.
+
+Su portada explica la herramienta, describe los siete bloques que despliega y
+ofrece la orden de instalación de la CLI lista para copiar:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh -o leroy && chmod +x leroy
+```
+
+El lienzo dibuja la demostración como cajas conectadas por las dependencias que
+Leroy aplica realmente. Cada caja se arrastra y se activa o desactiva, lo que
+enciende o apaga el bloque correspondiente del manifiesto. Trae escenarios de
+partida (plataforma, banca, retail, telco y sector público), edita personas con
+sus permisos y comprobaciones de acceso, valida contra las mismas reglas que
+`leroy.sh`, y exporta un manifiesto de esquema 2:
+
+```bash
+leroy demo plan --file mi-demo.json
+```
+
+Consulta [`web/README.md`](web/README.md) para el detalle.
+
 ## Demo lifecycle
 
 Print the built-in, secret-free manifest:
@@ -168,6 +193,14 @@ Destructive commands require explicit confirmation and only act on IDs in local 
 leroy demo destroy --demo-id leroy-demo --yes
 leroy demo recreate --file custom-demo.json --yes
 ```
+
+Manifests come in two schema versions. Version 1 fixes the persona set at three,
+with known keys and profiles, and keeps their Morpheus permission rules inside
+`leroy.sh`. Version 2 moves that into the manifest: any number of personas, each
+with its own permission rules, the access it must and must not have, whether it
+receives catalog access, and whether it runs the demonstration workflow. Leroy
+reads both, and `demo preset --schema 2` emits the built-in demo in the newer
+form. The graphical builder produces version 2.
 
 State is stored with user-only permissions under `${XDG_STATE_HOME:-$HOME/.local/state}/leroy`. An interrupted apply retains its completed resource IDs and can be resumed by running the same command again. If a saved deployment exists, changing its component selection requires **Recreate** so Leroy cannot silently leave deselected resources behind.
 

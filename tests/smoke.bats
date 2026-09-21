@@ -525,3 +525,140 @@ load test_helper
   ' _ "$LEROY_BIN"
   [ "$status" -eq 0 ]
 }
+
+@test "both schema versions validate and unknown versions are rejected" {
+  local v1="$BATS_TEST_TMPDIR/v1.json" v2="$BATS_TEST_TMPDIR/v2.json" v3="$BATS_TEST_TMPDIR/v3.json"
+  bash "$LEROY_BIN" demo preset >"$v1"
+  bash "$LEROY_BIN" demo preset --schema 2 >"$v2"
+  jq '.schemaVersion=3' "$v1" >"$v3"
+  run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$v1"
+  [ "$status" -eq 0 ]
+  run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$v2"
+  [ "$status" -eq 0 ]
+  run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$v3"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unsupported schema"* ]]
+}
+
+@test "schema 2 accepts extra personas and expands them" {
+  local v2="$BATS_TEST_TMPDIR/v2.json"
+  bash "$LEROY_BIN" demo preset --schema 2 |
+    jq '.personas += [{key:"auditor",role:"Auditor",username:"leroy-auditor",email:"a@example.invalid",profile:"auditor"}]' >"$v2"
+  run bash -c '
+    source "$1"
+    manifest_to_temp "$2"
+    resource_stream | jq -sc "[group_by(.type)[] | {(.[0].type): length}] | add | {role,cypher,user}"
+  ' _ "$LEROY_BIN" "$v2"
+  [ "$status" -eq 0 ]
+  jq -e '.role == 5 and .cypher == 4 and .user == 4' <<<"$output"
+}
+
+@test "schema 2 enforces persona identity and a tenant administrator" {
+  local base="$BATS_TEST_TMPDIR/base.json"
+  bash "$LEROY_BIN" demo preset --schema 2 >"$base"
+  for filter in \
+    '.personas[1].key = "admin"' \
+    '.personas[1].username = .personas[0].username' \
+    '.personas[0].profile = "platform-operator"' \
+    '.personas[2].permissions = [{pattern:"",access:"read"}]' \
+    '.personas[2].verify = {allow:"tasks"}'
+  do
+    jq "$filter" "$base" >"$BATS_TEST_TMPDIR/bad.json"
+    run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR/bad.json"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"schema version 2"* ]]
+  done
+}
+
+@test "persona permissions in the manifest replace the built-in profile rules" {
+  local captured="$BATS_TEST_TMPDIR/payloads.jsonl" v2="$BATS_TEST_TMPDIR/v2.json"
+  bash "$LEROY_BIN" demo preset --schema 2 |
+    jq '.personas |= map(if .key == "operator" then .permissions = [{pattern:"reports",access:"read"}] else . end)' >"$v2"
+  run bash -c '
+    source "$1"; BASE_USER_ROLE_ID=1; MASTER_TOKEN=test; captured="$3"
+    manifest_to_temp "$2"
+    api_request() {
+      if [[ "$1" == GET ]]; then
+        printf "%s\n" "{\"permissions\":[{\"code\":\"reports-all\",\"name\":\"Reports: All\",\"access\":\"full\"},{\"code\":\"provisioning-instances\",\"name\":\"Provisioning: Instances\",\"access\":\"full\"}]}"
+      else printf "%s\n" "$3" >>"$captured"; printf "%s\n" "{\"success\":true}"; fi
+    }
+    configure_role_permissions platform-operator 42 operator
+  ' _ "$LEROY_BIN" "$v2" "$captured"
+  [ "$status" -eq 0 ]
+  jq -se 'length == 1 and .[0].permissionCode == "reports-all" and .[0].access == "read"' "$captured"
+}
+
+@test "schema 2 personas choose catalog access, the tenant login, and the workflow runner" {
+  local v2="$BATS_TEST_TMPDIR/v2.json"
+  bash "$LEROY_BIN" demo preset --schema 2 |
+    jq '
+      .personas |= map(if .key == "consumer" then .catalogAccess = false else . end) |
+      .personas |= map(if .key == "admin" then .key = "boss" else . end) |
+      .personas |= map(if .key == "operator" then del(.runsWorkflow) else . end) |
+      .personas += [{key:"runner",role:"Runner",username:"leroy-runner",email:"r@example.invalid",profile:"platform-operator",runsWorkflow:true}]
+    ' >"$v2"
+  run bash -c '
+    source "$1"
+    manifest_to_temp "$2"
+    printf "catalog=%s admin=%s workflow=%s\n" \
+      "$(catalog_persona_keys | tr "\n" "," )" "$(tenant_admin_key)" "$(workflow_persona | jq -r .key)"
+  ' _ "$LEROY_BIN" "$v2"
+  [ "$status" -eq 0 ]
+  [ "$output" = "catalog=boss,operator,runner, admin=boss workflow=runner" ]
+}
+
+@test "a workflow execution that reports failure fails verification" {
+  run bash -c '
+    source "$1"
+    for body in "{\"success\":false}" "{\"success\":true}" "{}"; do
+      if jq -e ".success != false" <<<"$body" >/dev/null 2>&1; then printf "pass\n"; else printf "fail\n"; fi
+    done
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "fail" ]
+  [ "${lines[1]}" = "pass" ]
+  [ "${lines[2]}" = "pass" ]
+}
+
+@test "builder scenarios produce manifests Leroy accepts" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  local root="${PROJECT_ROOT}"
+  while read -r scenario; do
+    node "$root/web/tools/emit-manifests.mjs" "$scenario" >"$BATS_TEST_TMPDIR/$scenario.json"
+    run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR/$scenario.json"
+    [ "$status" -eq 0 ]
+    jq -e '.schemaVersion == 2' "$BATS_TEST_TMPDIR/$scenario.json"
+  done < <(node "$root/web/tools/emit-manifests.mjs")
+}
+
+@test "builder and Leroy agree on how many resources a manifest creates" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  local root="${PROJECT_ROOT}" expected actual
+  while read -r scenario; do
+    node "$root/web/tools/emit-manifests.mjs" "$scenario" >"$BATS_TEST_TMPDIR/$scenario.json"
+    expected="$(node "$root/web/tools/emit-manifests.mjs" "$scenario" count)"
+    actual="$(bash -c 'source "$1"; resource_count <"$2"' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR/$scenario.json")"
+    [ "$expected" = "$actual" ]
+  done < <(node "$root/web/tools/emit-manifests.mjs")
+}
+
+@test "builder feature toggles follow the same dependency rules as the TUI" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  run node --input-type=module -e '
+    import { applyFeatureDependencies, emptyFeatures } from "'"$PROJECT_ROOT"'/web/assets/schema.js";
+    const off = (features, key) => applyFeatureDependencies({ ...features, [key]: false }, key);
+    const on = (features, key) => applyFeatureDependencies({ ...features, [key]: true }, key);
+    const all = emptyFeatures(true);
+    const checks = [
+      off(all, "multitenancy").roles === false,
+      off(all, "groups").policies === false,
+      off(all, "automation").catalog === false,
+      on(off(all, "automation"), "catalog").automation === true,
+      on({ ...all, groups: false, policies: false }, "policies").groups === true,
+      on(off(all, "multitenancy"), "roles").multitenancy === true,
+    ];
+    console.log(checks.every(Boolean) ? "ok" : "mismatch");
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+}
