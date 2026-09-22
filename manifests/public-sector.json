@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 2,
+  "features": {
+    "multitenancy": true,
+    "roles": true,
+    "environments": true,
+    "groups": true,
+    "policies": true,
+    "automation": false,
+    "catalog": false
+  },
+  "metadata": {
+    "id": "public-sector",
+    "name": "Public Sector Demo",
+    "prefix": "public-sector",
+    "language": "en"
+  },
+  "tenant": {
+    "name": "Public Sector Demo",
+    "subdomain": "public-sector",
+    "description": "Managed by Leroy demo:public-sector"
+  },
+  "personas": [
+    {
+      "key": "admin",
+      "role": "Public Sector Demo Admin",
+      "username": "public-sector-admin",
+      "email": "public-sector-admin@example.invalid",
+      "profile": "tenant-admin",
+      "verify": {
+        "allow": "/api/whoami"
+      },
+      "catalogAccess": true
+    },
+    {
+      "key": "operator",
+      "role": "Public Sector Demo Operator",
+      "username": "public-sector-operator",
+      "email": "public-sector-operator@example.invalid",
+      "profile": "platform-operator",
+      "permissions": [
+        {
+          "pattern": "provisioning.*instances|instances[[:space:]]*$|provisioning.*apps|provisioning.*tasks|tasks.*script engines|library",
+          "access": "source"
+        },
+        {
+          "pattern": "infrastructure",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/tasks?max=1"
+      },
+      "catalogAccess": true,
+      "runsWorkflow": true
+    },
+    {
+      "key": "consumer",
+      "role": "Public Sector Demo Consumer",
+      "username": "public-sector-consumer",
+      "email": "public-sector-consumer@example.invalid",
+      "profile": "service-consumer",
+      "permissions": [
+        {
+          "pattern": "catalog|service catalog",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/catalog-item-types?max=1",
+        "deny": "/api/tasks?max=1"
+      },
+      "catalogAccess": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "Development",
+      "code": "public-sector-dev",
+      "description": "Managed by Leroy demo:public-sector",
+      "visibility": "private"
+    },
+    {
+      "name": "Production",
+      "code": "public-sector-prod",
+      "description": "Managed by Leroy demo:public-sector",
+      "visibility": "private"
+    }
+  ],
+  "groups": [
+    {
+      "name": "Citizen services",
+      "code": "public-sector-citizen",
+      "location": "Public data centre",
+      "description": "Managed by Leroy demo:public-sector"
+    },
+    {
+      "name": "Back office",
+      "code": "public-sector-backoffice",
+      "location": "Public data centre",
+      "description": "Managed by Leroy demo:public-sector"
+    }
+  ],
+  "policies": [
+    {
+      "name": "Legal notice",
+      "code": "public-sector-motd",
+      "type": "motd",
+      "scope": "tenant",
+      "config": {
+        "message": "Restricted to authorised personnel."
+      }
+    },
+    {
+      "name": "Expiration",
+      "code": "public-sector-expiration",
+      "type": "expiration",
+      "scope": "groups",
+      "config": {
+        "expirationDays": 30
+      }
+    }
+  ],
+  "automation": {
+    "inputs": [
+      {
+        "name": "Demo message",
+        "fieldName": "publicSectorMessage",
+        "fieldLabel": "Message",
+        "type": "text",
+        "defaultValue": "Hello from Leroy",
+        "required": true
+      }
+    ],
+    "tasks": [
+      {
+        "name": "Demo hello",
+        "code": "public-sector-hello",
+        "type": "groovy",
+        "resultType": "json",
+        "content": "return [success:true, message:(customOptions?.publicSectorMessage ?: \"Hello\"), source:\"public-sector\"]"
+      }
+    ],
+    "workflows": [
+      {
+        "name": "Welcome",
+        "code": "public-sector-welcome",
+        "type": "operation",
+        "task": "public-sector-hello",
+        "input": "publicSectorMessage"
+      }
+    ],
+    "catalogItems": [
+      {
+        "name": "Welcome",
+        "code": "public-sector-catalog",
+        "category": "Public Sector Demo",
+        "workflow": "public-sector-welcome",
+        "input": "publicSectorMessage",
+        "context": "none",
+        "enabled": true,
+        "featured": true,
+        "visibility": "private"
+      }
+    ]
+  }
+}

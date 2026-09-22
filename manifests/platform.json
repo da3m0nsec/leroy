@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 2,
+  "features": {
+    "multitenancy": true,
+    "roles": true,
+    "environments": true,
+    "groups": true,
+    "policies": true,
+    "automation": true,
+    "catalog": true
+  },
+  "metadata": {
+    "id": "leroy-demo",
+    "name": "Leroy Demo Organization",
+    "prefix": "leroy-demo",
+    "language": "en"
+  },
+  "tenant": {
+    "name": "Leroy Demo Organization",
+    "subdomain": "leroy-demo",
+    "description": "Managed by Leroy demo:leroy-demo"
+  },
+  "personas": [
+    {
+      "key": "admin",
+      "role": "Leroy Demo Organization Admin",
+      "username": "leroy-demo-admin",
+      "email": "leroy-demo-admin@example.invalid",
+      "profile": "tenant-admin",
+      "verify": {
+        "allow": "/api/whoami"
+      },
+      "catalogAccess": true
+    },
+    {
+      "key": "operator",
+      "role": "Leroy Demo Organization Operator",
+      "username": "leroy-demo-operator",
+      "email": "leroy-demo-operator@example.invalid",
+      "profile": "platform-operator",
+      "permissions": [
+        {
+          "pattern": "provisioning.*instances|instances[[:space:]]*$|provisioning.*apps|provisioning.*tasks|tasks.*script engines|library",
+          "access": "source"
+        },
+        {
+          "pattern": "infrastructure",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/tasks?max=1"
+      },
+      "catalogAccess": true,
+      "runsWorkflow": true
+    },
+    {
+      "key": "consumer",
+      "role": "Leroy Demo Organization Consumer",
+      "username": "leroy-demo-consumer",
+      "email": "leroy-demo-consumer@example.invalid",
+      "profile": "service-consumer",
+      "permissions": [
+        {
+          "pattern": "catalog|service catalog",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/catalog-item-types?max=1",
+        "deny": "/api/tasks?max=1"
+      },
+      "catalogAccess": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "Development",
+      "code": "leroy-demo-dev",
+      "description": "Managed by Leroy demo:leroy-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "Staging",
+      "code": "leroy-demo-stg",
+      "description": "Managed by Leroy demo:leroy-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "Production",
+      "code": "leroy-demo-prod",
+      "description": "Managed by Leroy demo:leroy-demo",
+      "visibility": "private"
+    }
+  ],
+  "groups": [
+    {
+      "name": "Development",
+      "code": "leroy-demo-development",
+      "location": "Development",
+      "description": "Managed by Leroy demo:leroy-demo"
+    },
+    {
+      "name": "Production",
+      "code": "leroy-demo-production",
+      "location": "Production",
+      "description": "Managed by Leroy demo:leroy-demo"
+    }
+  ],
+  "policies": [
+    {
+      "name": "Demo message",
+      "code": "leroy-demo-motd",
+      "type": "motd",
+      "scope": "tenant",
+      "config": {
+        "message": "Welcome to the Leroy demonstration environment."
+      }
+    },
+    {
+      "name": "Instance naming",
+      "code": "leroy-demo-instance-name",
+      "type": "instance-name",
+      "scope": "groups",
+      "config": {
+        "namingPattern": "leroy-demo-${userInitials}-${sequence}"
+      }
+    },
+    {
+      "name": "Expiration",
+      "code": "leroy-demo-expiration",
+      "type": "expiration",
+      "scope": "groups",
+      "config": {
+        "expirationDays": 30
+      }
+    },
+    {
+      "name": "Cypher access",
+      "code": "leroy-demo-cypher",
+      "type": "cypher",
+      "scope": "tenant",
+      "config": {
+        "keyPattern": "password/24/leroy-demo/*"
+      }
+    }
+  ],
+  "automation": {
+    "inputs": [
+      {
+        "name": "Demo message",
+        "fieldName": "leroyDemoMessage",
+        "fieldLabel": "Message",
+        "type": "text",
+        "defaultValue": "Hello from Leroy",
+        "required": true
+      }
+    ],
+    "tasks": [
+      {
+        "name": "Demo hello",
+        "code": "leroy-demo-hello",
+        "type": "groovy",
+        "resultType": "json",
+        "content": "return [success:true, message:(customOptions?.leroyDemoMessage ?: \"Hello\"), source:\"leroy-demo\"]"
+      }
+    ],
+    "workflows": [
+      {
+        "name": "Welcome",
+        "code": "leroy-demo-welcome",
+        "type": "operation",
+        "task": "leroy-demo-hello",
+        "input": "leroyDemoMessage"
+      }
+    ],
+    "catalogItems": [
+      {
+        "name": "Welcome",
+        "code": "leroy-demo-catalog",
+        "category": "Leroy Demo Organization",
+        "workflow": "leroy-demo-welcome",
+        "input": "leroyDemoMessage",
+        "context": "none",
+        "enabled": true,
+        "featured": true,
+        "visibility": "private"
+      }
+    ]
+  }
+}

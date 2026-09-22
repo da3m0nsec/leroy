@@ -17,6 +17,7 @@ MORPHEUS_REQUEST_TIMEOUT="${MORPHEUS_REQUEST_TIMEOUT:-60}"
 LEROY_OUTPUT="${LEROY_OUTPUT:-table}"
 LEROY_LOG_LEVEL="${LEROY_LOG_LEVEL:-info}"
 LEROY_STATE_DIR="${LEROY_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/leroy}"
+LEROY_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || printf '.')"
 MASTER_TOKEN=""
 TENANT_TOKEN=""
 TENANT_TOKEN_ID=""
@@ -1667,6 +1668,35 @@ tui_saved_demos() {
   done
 }
 
+# Manifests are looked for beside the script and in the working directory, so a
+# demo downloaded from the builder can be dropped into manifests/ and picked
+# without typing a path. LEROY_MANIFEST_DIR overrides both.
+manifest_directories() {
+  local dir
+  if [[ -n "${LEROY_MANIFEST_DIR-}" ]]; then
+    printf '%s\n' "$LEROY_MANIFEST_DIR"
+    return 0
+  fi
+  for dir in "${LEROY_SCRIPT_DIR}/manifests" "${PWD}/manifests"; do
+    printf '%s\n' "$dir"
+  done | awk '!seen[$0]++'
+}
+
+# One readable manifest per line: path, file name, demo ID and resource count.
+manifest_catalog() {
+  local dir file id count
+  while IFS= read -r dir; do
+    [[ -d "$dir" ]] || continue
+    for file in "$dir"/*.json; do
+      [[ -r "$file" ]] || continue
+      jq -e 'has("schemaVersion")' "$file" >/dev/null 2>&1 || continue
+      id="$(jq -r '.metadata.id // "?"' "$file" 2>/dev/null || printf '?')"
+      count="$(resource_count <"$file" 2>/dev/null || printf '?')"
+      printf '%s\t%s\t%s\t%s\n' "$file" "${file##*/}" "$id" "$count"
+    done
+  done < <(manifest_directories)
+}
+
 tui_use_preset() {
   TUI_MANIFEST_FILE=""
   TUI_MANIFEST_ORIGIN=""
@@ -1753,24 +1783,38 @@ tui_select_manifest() {
   local previous_file="$TUI_MANIFEST_FILE" previous_origin="$TUI_MANIFEST_ORIGIN"
   local previous_kind="$TUI_MANIFEST_KIND" previous_label="$TUI_MANIFEST_LABEL"
   local previous_features="$TUI_FEATURES_JSON" path
-  local TUI_SOURCE_NOTICE='Saved deployments are read from the state directory.'
+  local TUI_SOURCE_NOTICE
   local -a TUI_SOURCE_LABELS=('Built-in preset') TUI_SOURCE_HINTS=('') TUI_SOURCE_KINDS=(preset) TUI_SOURCE_ORIGINS=('')
+  local file_path file_name file_id file_count files=0
   TUI_SOURCE_HINTS[0]="$(preset_manifest | resource_count) resources"
+  while IFS=$'\t' read -r file_path file_name file_id file_count; do
+    [[ -n "$file_path" ]] || continue
+    TUI_SOURCE_LABELS+=("$file_name")
+    TUI_SOURCE_KINDS+=(file)
+    TUI_SOURCE_ORIGINS+=("$file_path")
+    TUI_SOURCE_HINTS+=("${file_id}, ${file_count} resources")
+    files=$((files + 1))
+  done < <(manifest_catalog)
   while IFS=$'\t' read -r id state expected recorded appliance; do
     [[ -n "$id" ]] || continue
     TUI_SOURCE_LABELS+=("$id")
     TUI_SOURCE_KINDS+=(saved)
     TUI_SOURCE_ORIGINS+=("$state")
     if [[ -n "$appliance" && "$appliance" != "$MORPHEUS_URL" ]]; then
-      TUI_SOURCE_HINTS+=("${recorded}/${expected} recorded, other appliance")
+      TUI_SOURCE_HINTS+=("saved deployment, ${recorded}/${expected} recorded, other appliance")
     else
-      TUI_SOURCE_HINTS+=("${recorded}/${expected} recorded")
+      TUI_SOURCE_HINTS+=("saved deployment, ${recorded}/${expected} recorded")
     fi
   done < <(tui_saved_demos)
-  TUI_SOURCE_LABELS+=('Manifest file...')
-  TUI_SOURCE_KINDS+=(file)
+  TUI_SOURCE_LABELS+=('Another file...')
+  TUI_SOURCE_KINDS+=(prompt)
   TUI_SOURCE_ORIGINS+=($'\x01none')
   TUI_SOURCE_HINTS+=('Type a path')
+  if ((files > 0)); then
+    TUI_SOURCE_NOTICE="${files} manifest(s) found in $(manifest_directories | paste -sd ' and ' -)."
+  else
+    TUI_SOURCE_NOTICE="Drop a manifest into $(manifest_directories | head -1) and it appears here."
+  fi
   count="${#TUI_SOURCE_LABELS[@]}"
   for index in "${!TUI_SOURCE_ORIGINS[@]}"; do
     [[ "${TUI_SOURCE_ORIGINS[$index]}" == "$TUI_MANIFEST_ORIGIN" ]] && selected="$index"
@@ -1788,7 +1832,8 @@ tui_select_manifest() {
         case "${TUI_SOURCE_KINDS[$selected]}" in
           preset) tui_use_preset ;;
           saved) tui_use_saved_demo "${TUI_SOURCE_ORIGINS[$selected]}" || { TUI_SOURCE_NOTICE='That saved deployment could not be read.'; continue; } ;;
-          file)
+          file) tui_use_manifest_file "${TUI_SOURCE_ORIGINS[$selected]}" ;;
+          prompt)
             tui_prompt_manifest_path || { TUI_SOURCE_NOTICE='No manifest file was selected.'; continue; }
             tui_use_manifest_file "$TUI_PROMPTED_PATH"
             ;;

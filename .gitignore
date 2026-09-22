@@ -30,3 +30,11 @@ test-results/
 Thumbs.db
 node_modules/
 npm-debug.log*
+
+# Manifests dropped in by the operator; the generated scenarios are tracked
+manifests/*.json
+!manifests/platform.json
+!manifests/banking.json
+!manifests/retail.json
+!manifests/telco.json
+!manifests/public-sector.json

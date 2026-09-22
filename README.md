@@ -49,6 +49,16 @@ check and exits `9` if any fails.
 Also available: `demo list` and `demo state` (read local state, no credentials
 needed), `demo wizard`, `demo recreate`, and `demo preset --schema 2`.
 
+`manifests/` ships the builder's starting scenarios and is where your own go:
+
+```bash
+./leroy.sh demo apply --file manifests/banking.json
+```
+
+Anything you drop there appears in the TUI's manifest picker, so a demo
+downloaded from the builder needs no path typed. Leroy looks beside the script
+and under the working directory; `LEROY_MANIFEST_DIR` overrides both.
+
 Destructive commands need explicit confirmation and only touch resources whose
 recorded ID **and** remote ownership marker both match.
 
@@ -99,7 +109,7 @@ selection, and the state of that deployment.
 | Plan | `p` preview the plan · `i` deployment inventory |
 | Build | `a` build, which previews and confirms first |
 | Lifecycle | `v` verify · `d` deep verify · `r` recreate · `x` destroy |
-| Manifest | `c` components · `m` manifest source · `w` manifest wizard |
+| Manifest | `c` components · `m` pick a manifest · `w` manifest wizard |
 | Session | `q` quit |
 
 `n` sets the appliance for the current session only, so a wrong token or a

@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Protected in-TUI destruction and recreation confirmations.
 - Checkbox-based TUI selector for multitenancy, roles and users, environments, groups, policies, automation, and service catalog.
 - `demo list` and `demo state` report saved deployments and their recorded Morpheus IDs from local state, without appliance credentials.
+- `manifests/` beside the script, shipping the builder's five starting scenarios and holding your own. Everything in it is listed in the TUI manifest picker with its demo ID and resource count, so a manifest downloaded from the builder is selected rather than typed. Leroy also looks under the working directory, and `LEROY_MANIFEST_DIR` overrides both. `make manifests` regenerates the shipped files and the suite fails if they drift from the builder.
 - TUI manifest-source screen listing the built-in preset, every deployment recorded in the state directory, and a manifest file of your choosing, plus a deployment inventory screen and hand-off from the wizard to the active manifest.
 - TUI build preview: the plan runs first, reports how many resources it would create, update, and adopt, and asks for confirmation before anything is sent to Morpheus.
 - TUI retry with force when destruction or recreation stops on an ownership mismatch, gated on typing `force` and offered only for failures that forcing can resolve.

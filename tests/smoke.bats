@@ -1007,3 +1007,36 @@ JSON
   [ "$status" -ne 0 ]
   [[ "$output" == *"no file to save to"* ]]
 }
+
+@test "the shipped manifests match the builder scenarios" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  local root="${PROJECT_ROOT}"
+  while read -r scenario; do
+    [ -r "$root/manifests/$scenario.json" ]
+    node "$root/web/tools/emit-manifests.mjs" "$scenario" >"$BATS_TEST_TMPDIR/$scenario.json"
+    run diff -u "$BATS_TEST_TMPDIR/$scenario.json" "$root/manifests/$scenario.json"
+    [ "$status" -eq 0 ]
+  done < <(node "$root/web/tools/emit-manifests.mjs")
+}
+
+@test "every shipped manifest is one Leroy accepts" {
+  local root="${PROJECT_ROOT}"
+  for file in "$root"/manifests/*.json; do
+    run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$file"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "manifest discovery finds files beside the script and reports their demo" {
+  local dir="$BATS_TEST_TMPDIR/manifests"
+  mkdir -p "$dir"
+  bash "$LEROY_BIN" demo preset | jq '.metadata.id="dropped-in"' >"$dir/dropped.json"
+  printf '%s\n' '{"not":"a manifest"}' >"$dir/ignore-me.json"
+  printf 'plain text\n' >"$dir/notes.txt"
+  run env LEROY_MANIFEST_DIR="$dir" bash -c 'source "$1"; manifest_catalog' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropped.json"*"dropped-in"*"24"* ]]
+  [[ "$output" != *"ignore-me"* ]]
+  [[ "$output" != *"notes.txt"* ]]
+  [ "$(grep -c '' <<<"$output")" -eq 1 ]
+}

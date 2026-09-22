@@ -2,10 +2,10 @@ SHELL := bash
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 
-.PHONY: help setup check syntax lint test format install uninstall web web-manifests
+.PHONY: help setup check syntax lint test format install uninstall web web-manifests manifests
 
 help:
-	@printf '%s\n' 'Targets: setup check syntax lint test format install uninstall web web-manifests'
+	@printf '%s\n' 'Targets: setup check syntax lint test format install uninstall web web-manifests manifests'
 
 setup:
 	@bash ./scripts/setup.sh
@@ -27,6 +27,13 @@ format:
 web:
 	@printf '%s\n' 'Constructor de demos en http://localhost:8765/ (Ctrl+C para salir)'
 	@python3 -m http.server 8765 --directory web
+
+manifests:
+	@command -v node >/dev/null 2>&1 || { printf '%s\n' 'node is required to regenerate the shipped manifests' >&2; exit 3; }
+	@for scenario in $$(node web/tools/emit-manifests.mjs); do \
+		node web/tools/emit-manifests.mjs "$$scenario" > "manifests/$$scenario.json"; \
+		printf 'wrote manifests/%s.json\n' "$$scenario"; \
+	done
 
 web-manifests:
 	@command -v node >/dev/null 2>&1 || { printf '%s\n' 'node is required to emit builder manifests' >&2; exit 3; }

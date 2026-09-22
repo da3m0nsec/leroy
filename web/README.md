@@ -17,6 +17,9 @@ directly at `#builder`.
 
 ## How to use it
 
+Download a manifest into the repository's `manifests/` directory and the TUI
+lists it for selection, no path typing needed.
+
 1. Pick a starting scenario (platform, banking, retail, telco, public sector).
 2. Adjust identity, personas, environments, groups, policies and automation.
 3. Switch blocks on and off with the toggle on each box of the canvas.

@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 2,
+  "features": {
+    "multitenancy": false,
+    "roles": false,
+    "environments": true,
+    "groups": true,
+    "policies": true,
+    "automation": true,
+    "catalog": true
+  },
+  "metadata": {
+    "id": "telco-demo",
+    "name": "Telco Demo",
+    "prefix": "telco-demo",
+    "language": "en"
+  },
+  "tenant": {
+    "name": "Telco Demo",
+    "subdomain": "telco-demo",
+    "description": "Managed by Leroy demo:telco-demo"
+  },
+  "personas": [
+    {
+      "key": "admin",
+      "role": "Telco Demo Admin",
+      "username": "telco-demo-admin",
+      "email": "telco-demo-admin@example.invalid",
+      "profile": "tenant-admin",
+      "verify": {
+        "allow": "/api/whoami"
+      },
+      "catalogAccess": true
+    },
+    {
+      "key": "operator",
+      "role": "Telco Demo Operator",
+      "username": "telco-demo-operator",
+      "email": "telco-demo-operator@example.invalid",
+      "profile": "platform-operator",
+      "permissions": [
+        {
+          "pattern": "provisioning.*instances|instances[[:space:]]*$|provisioning.*apps|provisioning.*tasks|tasks.*script engines|library",
+          "access": "source"
+        },
+        {
+          "pattern": "infrastructure",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/tasks?max=1"
+      },
+      "catalogAccess": true,
+      "runsWorkflow": true
+    },
+    {
+      "key": "consumer",
+      "role": "Telco Demo Consumer",
+      "username": "telco-demo-consumer",
+      "email": "telco-demo-consumer@example.invalid",
+      "profile": "service-consumer",
+      "permissions": [
+        {
+          "pattern": "catalog|service catalog",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/catalog-item-types?max=1",
+        "deny": "/api/tasks?max=1"
+      },
+      "catalogAccess": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "Core",
+      "code": "telco-demo-core",
+      "description": "Managed by Leroy demo:telco-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "North edge",
+      "code": "telco-demo-edge-n",
+      "description": "Managed by Leroy demo:telco-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "South edge",
+      "code": "telco-demo-edge-s",
+      "description": "Managed by Leroy demo:telco-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "Lab",
+      "code": "telco-demo-lab",
+      "description": "Managed by Leroy demo:telco-demo",
+      "visibility": "private"
+    }
+  ],
+  "groups": [
+    {
+      "name": "Network core",
+      "code": "telco-demo-core",
+      "location": "Central data centre",
+      "description": "Managed by Leroy demo:telco-demo"
+    },
+    {
+      "name": "Edge sites",
+      "code": "telco-demo-edge",
+      "location": "Distributed",
+      "description": "Managed by Leroy demo:telco-demo"
+    }
+  ],
+  "policies": [
+    {
+      "name": "Network notice",
+      "code": "telco-demo-motd",
+      "type": "motd",
+      "scope": "tenant",
+      "config": {
+        "message": "Demonstration environment for network and edge."
+      }
+    },
+    {
+      "name": "Node naming",
+      "code": "telco-demo-instance-name",
+      "type": "instance-name",
+      "scope": "groups",
+      "config": {
+        "namingPattern": "tlc-${userInitials}-${sequence}"
+      }
+    }
+  ],
+  "automation": {
+    "inputs": [
+      {
+        "name": "Demo message",
+        "fieldName": "telcoDemoMessage",
+        "fieldLabel": "Message",
+        "type": "text",
+        "defaultValue": "Hello from Leroy",
+        "required": true
+      }
+    ],
+    "tasks": [
+      {
+        "name": "Demo hello",
+        "code": "telco-demo-hello",
+        "type": "groovy",
+        "resultType": "json",
+        "content": "return [success:true, message:(customOptions?.telcoDemoMessage ?: \"Hello\"), source:\"telco-demo\"]"
+      }
+    ],
+    "workflows": [
+      {
+        "name": "Welcome",
+        "code": "telco-demo-welcome",
+        "type": "operation",
+        "task": "telco-demo-hello",
+        "input": "telcoDemoMessage"
+      }
+    ],
+    "catalogItems": [
+      {
+        "name": "Welcome",
+        "code": "telco-demo-catalog",
+        "category": "Telco Demo",
+        "workflow": "telco-demo-welcome",
+        "input": "telcoDemoMessage",
+        "context": "none",
+        "enabled": true,
+        "featured": true,
+        "visibility": "private"
+      }
+    ]
+  }
+}
