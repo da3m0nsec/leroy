@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 2,
+  "features": {
+    "multitenancy": true,
+    "roles": true,
+    "environments": true,
+    "groups": true,
+    "policies": true,
+    "automation": true,
+    "catalog": true
+  },
+  "metadata": {
+    "id": "retail-demo",
+    "name": "Retail Demo",
+    "prefix": "retail-demo",
+    "language": "en"
+  },
+  "tenant": {
+    "name": "Retail Demo",
+    "subdomain": "retail-demo",
+    "description": "Managed by Leroy demo:retail-demo"
+  },
+  "personas": [
+    {
+      "key": "admin",
+      "role": "Retail Demo Admin",
+      "username": "retail-demo-admin",
+      "email": "retail-demo-admin@example.invalid",
+      "profile": "tenant-admin",
+      "verify": {
+        "allow": "/api/whoami"
+      },
+      "catalogAccess": true
+    },
+    {
+      "key": "operator",
+      "role": "Retail Demo Operator",
+      "username": "retail-demo-operator",
+      "email": "retail-demo-operator@example.invalid",
+      "profile": "platform-operator",
+      "permissions": [
+        {
+          "pattern": "provisioning.*instances|instances[[:space:]]*$|provisioning.*apps|provisioning.*tasks|tasks.*script engines|library",
+          "access": "source"
+        },
+        {
+          "pattern": "infrastructure",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/tasks?max=1"
+      },
+      "catalogAccess": true,
+      "runsWorkflow": true
+    },
+    {
+      "key": "consumer",
+      "role": "Retail Demo Consumer",
+      "username": "retail-demo-consumer",
+      "email": "retail-demo-consumer@example.invalid",
+      "profile": "service-consumer",
+      "permissions": [
+        {
+          "pattern": "catalog|service catalog",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/catalog-item-types?max=1",
+        "deny": "/api/tasks?max=1"
+      },
+      "catalogAccess": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "Store",
+      "code": "retail-demo-store",
+      "description": "Managed by Leroy demo:retail-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "E-commerce",
+      "code": "retail-demo-ecom",
+      "description": "Managed by Leroy demo:retail-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "Production",
+      "code": "retail-demo-prod",
+      "description": "Managed by Leroy demo:retail-demo",
+      "visibility": "private"
+    }
+  ],
+  "groups": [
+    {
+      "name": "North brand",
+      "code": "retail-demo-north",
+      "location": "Northern region",
+      "description": "Managed by Leroy demo:retail-demo"
+    },
+    {
+      "name": "South brand",
+      "code": "retail-demo-south",
+      "location": "Southern region",
+      "description": "Managed by Leroy demo:retail-demo"
+    },
+    {
+      "name": "Shared platform",
+      "code": "retail-demo-shared",
+      "location": "Central",
+      "description": "Managed by Leroy demo:retail-demo"
+    }
+  ],
+  "policies": [
+    {
+      "name": "Campaign notice",
+      "code": "retail-demo-motd",
+      "type": "motd",
+      "scope": "tenant",
+      "config": {
+        "message": "Demonstration environment for retail campaigns."
+      }
+    },
+    {
+      "name": "Naming per brand",
+      "code": "retail-demo-instance-name",
+      "type": "instance-name",
+      "scope": "groups",
+      "config": {
+        "namingPattern": "rtl-${userInitials}-${sequence}"
+      }
+    },
+    {
+      "name": "Campaign expiration",
+      "code": "retail-demo-expiration",
+      "type": "expiration",
+      "scope": "groups",
+      "config": {
+        "expirationDays": 14
+      }
+    }
+  ],
+  "automation": {
+    "inputs": [
+      {
+        "name": "Demo message",
+        "fieldName": "retailDemoMessage",
+        "fieldLabel": "Message",
+        "type": "text",
+        "defaultValue": "Hello from Leroy",
+        "required": true
+      }
+    ],
+    "tasks": [
+      {
+        "name": "Demo hello",
+        "code": "retail-demo-hello",
+        "type": "groovy",
+        "resultType": "json",
+        "content": "return [success:true, message:(customOptions?.retailDemoMessage ?: \"Hello\"), source:\"retail-demo\"]"
+      }
+    ],
+    "workflows": [
+      {
+        "name": "Welcome",
+        "code": "retail-demo-welcome",
+        "type": "operation",
+        "task": "retail-demo-hello",
+        "input": "retailDemoMessage"
+      }
+    ],
+    "catalogItems": [
+      {
+        "name": "Welcome",
+        "code": "retail-demo-catalog",
+        "category": "Store services",
+        "workflow": "retail-demo-welcome",
+        "input": "retailDemoMessage",
+        "context": "none",
+        "enabled": true,
+        "featured": true,
+        "visibility": "private"
+      }
+    ]
+  }
+}

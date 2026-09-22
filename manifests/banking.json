@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 2,
+  "features": {
+    "multitenancy": true,
+    "roles": true,
+    "environments": true,
+    "groups": true,
+    "policies": true,
+    "automation": true,
+    "catalog": true
+  },
+  "metadata": {
+    "id": "banking-demo",
+    "name": "Banking Demo",
+    "prefix": "banking-demo",
+    "language": "en"
+  },
+  "tenant": {
+    "name": "Banking Demo",
+    "subdomain": "banking-demo",
+    "description": "Managed by Leroy demo:banking-demo"
+  },
+  "personas": [
+    {
+      "key": "admin",
+      "role": "Banking Demo Admin",
+      "username": "banking-demo-admin",
+      "email": "banking-demo-admin@example.invalid",
+      "profile": "tenant-admin",
+      "verify": {
+        "allow": "/api/whoami"
+      },
+      "catalogAccess": true
+    },
+    {
+      "key": "operator",
+      "role": "Banking Demo Operator",
+      "username": "banking-demo-operator",
+      "email": "banking-demo-operator@example.invalid",
+      "profile": "platform-operator",
+      "permissions": [
+        {
+          "pattern": "provisioning.*instances|instances[[:space:]]*$|provisioning.*apps|provisioning.*tasks|tasks.*script engines|library",
+          "access": "source"
+        },
+        {
+          "pattern": "infrastructure",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/tasks?max=1"
+      },
+      "catalogAccess": true,
+      "runsWorkflow": true
+    },
+    {
+      "key": "consumer",
+      "role": "Banking Demo Consumer",
+      "username": "banking-demo-consumer",
+      "email": "banking-demo-consumer@example.invalid",
+      "profile": "service-consumer",
+      "permissions": [
+        {
+          "pattern": "catalog|service catalog",
+          "access": "source"
+        }
+      ],
+      "verify": {
+        "allow": "/api/catalog-item-types?max=1",
+        "deny": "/api/tasks?max=1"
+      },
+      "catalogAccess": true
+    },
+    {
+      "key": "auditor",
+      "role": "Banking Demo Auditor",
+      "username": "banking-demo-auditor",
+      "email": "banking-demo-auditor@example.invalid",
+      "profile": "auditor",
+      "permissions": [
+        {
+          "pattern": "reports|logs|activity",
+          "access": "read"
+        }
+      ],
+      "verify": {
+        "allow": "/api/whoami",
+        "deny": "/api/tasks?max=1"
+      },
+      "catalogAccess": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "Development",
+      "code": "banking-demo-dev",
+      "description": "Managed by Leroy demo:banking-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "Integration",
+      "code": "banking-demo-int",
+      "description": "Managed by Leroy demo:banking-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "Staging",
+      "code": "banking-demo-pre",
+      "description": "Managed by Leroy demo:banking-demo",
+      "visibility": "private"
+    },
+    {
+      "name": "Production",
+      "code": "banking-demo-prod",
+      "description": "Managed by Leroy demo:banking-demo",
+      "visibility": "private"
+    }
+  ],
+  "groups": [
+    {
+      "name": "Core banking",
+      "code": "banking-demo-core",
+      "location": "Primary data centre",
+      "description": "Managed by Leroy demo:banking-demo"
+    },
+    {
+      "name": "Digital channels",
+      "code": "banking-demo-channels",
+      "location": "Secondary data centre",
+      "description": "Managed by Leroy demo:banking-demo"
+    }
+  ],
+  "policies": [
+    {
+      "name": "Compliance notice",
+      "code": "banking-demo-motd",
+      "type": "motd",
+      "scope": "tenant",
+      "config": {
+        "message": "Activity in this environment is logged and subject to internal policy."
+      }
+    },
+    {
+      "name": "Regulated naming",
+      "code": "banking-demo-instance-name",
+      "type": "instance-name",
+      "scope": "groups",
+      "config": {
+        "namingPattern": "bnk-${userInitials}-${sequence}"
+      }
+    },
+    {
+      "name": "Short expiration",
+      "code": "banking-demo-expiration",
+      "type": "expiration",
+      "scope": "groups",
+      "config": {
+        "expirationDays": 7
+      }
+    },
+    {
+      "name": "Cypher access",
+      "code": "banking-demo-cypher",
+      "type": "cypher",
+      "scope": "tenant",
+      "config": {
+        "keyPattern": "password/24/banking-demo/*"
+      }
+    }
+  ],
+  "automation": {
+    "inputs": [
+      {
+        "name": "Demo message",
+        "fieldName": "bankingDemoMessage",
+        "fieldLabel": "Message",
+        "type": "text",
+        "defaultValue": "Hello from Leroy",
+        "required": true
+      }
+    ],
+    "tasks": [
+      {
+        "name": "Demo hello",
+        "code": "banking-demo-hello",
+        "type": "groovy",
+        "resultType": "json",
+        "content": "return [success:true, message:(customOptions?.bankingDemoMessage ?: \"Hello\"), source:\"banking-demo\"]"
+      }
+    ],
+    "workflows": [
+      {
+        "name": "Welcome",
+        "code": "banking-demo-welcome",
+        "type": "operation",
+        "task": "banking-demo-hello",
+        "input": "bankingDemoMessage"
+      }
+    ],
+    "catalogItems": [
+      {
+        "name": "Welcome",
+        "code": "banking-demo-catalog",
+        "category": "Banking Demo",
+        "workflow": "banking-demo-welcome",
+        "input": "bankingDemoMessage",
+        "context": "none",
+        "enabled": true,
+        "featured": true,
+        "visibility": "private"
+      }
+    ]
+  }
+}

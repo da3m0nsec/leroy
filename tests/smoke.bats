@@ -669,7 +669,7 @@ load test_helper
 @test "a project-local .env is read without sourcing it" {
   cd "$BATS_TEST_TMPDIR"
   printf 'MORPHEUS_URL=https://from-env.example.test\nMORPHEUS_API_TOKEN=env-token\n' >.env
-  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN bash -c '
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN LEROY_ENV_FILE=.env bash -c '
     source "$1"; load_config ""; printf "%s|%s|%s\n" "$MORPHEUS_URL" "$MORPHEUS_API_TOKEN" "$MASTER_TOKEN"
   ' _ "$LEROY_BIN"
   [ "$status" -eq 0 ]
@@ -679,7 +679,7 @@ load test_helper
 @test ".env parsing handles quotes, export, CRLF and ignores foreign keys" {
   cd "$BATS_TEST_TMPDIR"
   printf '# a comment\n\nexport MORPHEUS_URL="https://quoted.example.test"\r\nMORPHEUS_API_TOKEN=  spaced  \nLEROY_OUTPUT=%s\nDATABASE_URL=postgres://secret\nnot a pair\n' "'json'" >.env
-  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN bash -c '
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN LEROY_ENV_FILE=.env bash -c '
     source "$1"; load_config ""
     printf "%s|%s|%s|%s\n" "$MORPHEUS_URL" "$MORPHEUS_API_TOKEN" "$LEROY_OUTPUT" "${DATABASE_URL-unset}"
   ' _ "$LEROY_BIN"
@@ -690,7 +690,7 @@ load test_helper
 @test "a .env cannot execute code and exported variables still win" {
   cd "$BATS_TEST_TMPDIR"
   printf 'MORPHEUS_URL=$(touch %s/pwned)\nMORPHEUS_API_TOKEN=`touch %s/pwned2`\n' "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" >.env
-  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN bash -c '
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN LEROY_ENV_FILE=.env bash -c '
     source "$1"; load_config ""; printf "%s\n" "$MORPHEUS_URL"
   ' _ "$LEROY_BIN"
   [ "$status" -eq 0 ]
@@ -699,7 +699,7 @@ load test_helper
   [ ! -e "$BATS_TEST_TMPDIR/pwned2" ]
 
   printf 'MORPHEUS_URL=https://from-file.example.test\n' >.env
-  run env MORPHEUS_URL=https://exported.example.test bash -c '
+  run env MORPHEUS_URL=https://exported.example.test LEROY_ENV_FILE=.env bash -c '
     source "$1"; load_config ""; printf "%s\n" "$MORPHEUS_URL"
   ' _ "$LEROY_BIN"
   [ "$status" -eq 0 ]
@@ -936,4 +936,107 @@ JSON
   ' _ "$LEROY_BIN"
   [ "$status" -eq 5 ]
   [[ "$output" == *'while granting "provisioning-instances" with access "full" to the platform-operator role (ID 77)'* ]]
+}
+
+@test "saving the connection preserves everything else in the environment file" {
+  cd "$BATS_TEST_TMPDIR"
+  printf '%s\n' '# my settings' 'DATABASE_URL=postgres://keep-me' \
+    'MORPHEUS_URL=https://old.example.test' 'export LEROY_OUTPUT=json' '# trailing comment' >.env
+  chmod 644 .env
+  run env LEROY_ENV_FILE=.env bash -c '
+    source "$1"
+    MORPHEUS_URL=https://new.example.test
+    MORPHEUS_API_TOKEN=brand-new-token
+    save_connection
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"mode 600"* ]]
+  [[ "$output" == *"do not commit it"* ]]
+  grep -qx '# my settings' .env
+  grep -qx 'DATABASE_URL=postgres://keep-me' .env
+  grep -qx 'export LEROY_OUTPUT=json' .env
+  grep -qx '# trailing comment' .env
+  grep -qx 'MORPHEUS_URL="https://new.example.test"' .env
+  grep -qx 'MORPHEUS_API_TOKEN="brand-new-token"' .env
+  [ "$(grep -c '^MORPHEUS_URL' .env)" -eq 1 ]
+  [ "$(stat -c '%a' .env)" = "600" ]
+}
+
+@test "a saved connection is read back on the next run" {
+  cd "$BATS_TEST_TMPDIR"
+  rm -f .env
+  run env LEROY_ENV_FILE=.env bash -c '
+    source "$1"
+    MORPHEUS_URL=https://round-trip.example.test
+    MORPHEUS_API_TOKEN=round-trip-token
+    save_connection
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN LEROY_ENV_FILE=.env bash -c '
+    source "$1"; load_config ""; printf "%s|%s\n" "$MORPHEUS_URL" "$MASTER_TOKEN"
+  ' _ "$LEROY_BIN"
+  [[ "$output" == *"https://round-trip.example.test|round-trip-token"* ]]
+}
+
+@test "a value the file format cannot hold is refused rather than corrupted" {
+  cd "$BATS_TEST_TMPDIR"
+  rm -f .env
+  run env LEROY_ENV_FILE=.env bash -c '
+    source "$1"
+    MORPHEUS_URL=https://x.example.test
+    MORPHEUS_API_TOKEN='"'"'has"a quote'"'"'
+    save_connection
+  ' _ "$LEROY_BIN"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cannot hold"* ]]
+  [ ! -e .env ]
+}
+
+@test "LEROY_ENV_FILE decides where the connection is saved" {
+  cd "$BATS_TEST_TMPDIR"
+  rm -f .env other.env
+  run env LEROY_ENV_FILE=other.env bash -c '
+    source "$1"; MORPHEUS_URL=https://x.example.test; MORPHEUS_API_TOKEN=tok; save_connection
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ -e other.env ]
+  [ ! -e .env ]
+  run env LEROY_ENV_FILE= bash -c '
+    source "$1"; MORPHEUS_URL=https://x.example.test; MORPHEUS_API_TOKEN=tok; save_connection
+  ' _ "$LEROY_BIN"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no file to save to"* ]]
+}
+
+@test "the shipped manifests match the builder scenarios" {
+  command -v node >/dev/null 2>&1 || skip "node is not installed"
+  local root="${PROJECT_ROOT}"
+  while read -r scenario; do
+    [ -r "$root/manifests/$scenario.json" ]
+    node "$root/web/tools/emit-manifests.mjs" "$scenario" >"$BATS_TEST_TMPDIR/$scenario.json"
+    run diff -u "$BATS_TEST_TMPDIR/$scenario.json" "$root/manifests/$scenario.json"
+    [ "$status" -eq 0 ]
+  done < <(node "$root/web/tools/emit-manifests.mjs")
+}
+
+@test "every shipped manifest is one Leroy accepts" {
+  local root="${PROJECT_ROOT}"
+  for file in "$root"/manifests/*.json; do
+    run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$file"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "manifest discovery finds files beside the script and reports their demo" {
+  local dir="$BATS_TEST_TMPDIR/manifests"
+  mkdir -p "$dir"
+  bash "$LEROY_BIN" demo preset | jq '.metadata.id="dropped-in"' >"$dir/dropped.json"
+  printf '%s\n' '{"not":"a manifest"}' >"$dir/ignore-me.json"
+  printf 'plain text\n' >"$dir/notes.txt"
+  run env LEROY_MANIFEST_DIR="$dir" bash -c 'source "$1"; manifest_catalog' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropped.json"*"dropped-in"*"24"* ]]
+  [[ "$output" != *"ignore-me"* ]]
+  [[ "$output" != *"notes.txt"* ]]
+  [ "$(grep -c '' <<<"$output")" -eq 1 ]
 }

@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Protected in-TUI destruction and recreation confirmations.
 - Checkbox-based TUI selector for multitenancy, roles and users, environments, groups, policies, automation, and service catalog.
 - `demo list` and `demo state` report saved deployments and their recorded Morpheus IDs from local state, without appliance credentials.
+- `manifests/` beside the script, shipping the builder's five starting scenarios and holding your own. Everything in it is listed in the TUI manifest picker with its demo ID and resource count, so a manifest downloaded from the builder is selected rather than typed. Leroy also looks under the working directory, and `LEROY_MANIFEST_DIR` overrides both. `make manifests` regenerates the shipped files and the suite fails if they drift from the builder.
 - TUI manifest-source screen listing the built-in preset, every deployment recorded in the state directory, and a manifest file of your choosing, plus a deployment inventory screen and hand-off from the wizard to the active manifest.
 - TUI build preview: the plan runs first, reports how many resources it would create, update, and adopt, and asks for confirmation before anything is sent to Morpheus.
 - TUI retry with force when destruction or recreation stops on an ownership mismatch, gated on typing `force` and offered only for failures that forcing can resolve.
@@ -24,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Graphical manifest builder under `web/`, deployed to GitHub Pages: a canvas of draggable boxes wired by the dependencies Leroy applies, with demo scenarios for platform, banking, retail, telco and public sector, persona and permission editing, live validation against the same rules as `leroy.sh`, and manifest import and export.
 - `make web` serves the builder locally and `make web-manifests` prints each scenario's manifest.
 - TUI action to configure the appliance URL and token without leaving the dashboard, for a wrong token or a second appliance. The token is read hidden and never displayed back, and the values apply to the session only.
+- Both the CLI prompt and the TUI connection action offer to save the appliance URL and token to the environment file, so they are not retyped every run. Saving replaces only those two assignments and leaves the rest of the file, comments included, as it was; the file is created mode `0600` and its full path is reported.
 - A project-local `.env` is read on start, with no sourcing or exporting. It is parsed rather than sourced: only Leroy's own settings are read, `export` prefixes, quotes and CRLF endings are tolerated, and a value is never evaluated. `LEROY_ENV_FILE` points it elsewhere or, when empty, skips it.
 
 ### Changed

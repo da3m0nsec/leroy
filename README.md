@@ -49,6 +49,16 @@ check and exits `9` if any fails.
 Also available: `demo list` and `demo state` (read local state, no credentials
 needed), `demo wizard`, `demo recreate`, and `demo preset --schema 2`.
 
+`manifests/` ships the builder's starting scenarios and is where your own go:
+
+```bash
+./leroy.sh demo apply --file manifests/banking.json
+```
+
+Anything you drop there appears in the TUI's manifest picker, so a demo
+downloaded from the builder needs no path typed. Leroy looks beside the script
+and under the working directory; `LEROY_MANIFEST_DIR` overrides both.
+
 Destructive commands need explicit confirmation and only touch resources whose
 recorded ID **and** remote ownership marker both match.
 
@@ -99,7 +109,7 @@ selection, and the state of that deployment.
 | Plan | `p` preview the plan · `i` deployment inventory |
 | Build | `a` build, which previews and confirms first |
 | Lifecycle | `v` verify · `d` deep verify · `r` recreate · `x` destroy |
-| Manifest | `c` components · `m` manifest source · `w` manifest wizard |
+| Manifest | `c` components · `m` pick a manifest · `w` manifest wizard |
 | Session | `q` quit |
 
 `n` sets the appliance for the current session only, so a wrong token or a
@@ -116,6 +126,9 @@ scrolled. Set `NO_COLOR=1` to drop the color styling.
   keys outright.
 - Tokens come from `MORPHEUS_API_TOKEN` or a `0600` config file, never from
   command-line arguments, which other users can read.
+- Saving a connection writes a token to disk. Leroy asks first, names the full
+  path it wrote, and sets mode `0600`. The file is relative to the working
+  directory, not to the script.
 - A `.env` is read from the working directory, so treat it like any other file
   you would not run blindly: Leroy never executes it, but a stray one could
   still point `MORPHEUS_URL` somewhere unexpected. It says which file it loaded,
@@ -139,6 +152,11 @@ cp .env.example .env && chmod 600 .env
 $EDITOR .env
 ./leroy.sh status
 ```
+
+When Leroy asks for the URL and token because neither is set, it offers to save
+them there for you; the TUI's `n` action does the same. Saving replaces those
+two assignments and leaves every other line, comments included, untouched, and
+sets the file to mode `0600`.
 
 That file is **parsed, not sourced**: only Leroy's own settings are read, every
 other key is ignored, and nothing in it is ever executed. Because it is read
