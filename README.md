@@ -93,14 +93,18 @@ Run `./leroy.sh` with no arguments. The dashboard reports the appliance, the
 authenticated identity, the active manifest and its demo, the component
 selection, and the state of that deployment.
 
-| Key | Action |
+| Section | Keys |
 | --- | --- |
-| `s` `i` | Connection status · deployment inventory |
-| `p` `a` | Preview plan · build (previews and confirms first) |
-| `v` `d` | Verify structure · deep verification |
-| `r` `x` | Recreate · destroy (both confirm with the organization name) |
-| `c` `m` `w` | Components · manifest source · manifest wizard |
-| `q` | Quit |
+| Connection | `n` configure the appliance URL and token · `s` check the connection |
+| Plan | `p` preview the plan · `i` deployment inventory |
+| Build | `a` build, which previews and confirms first |
+| Lifecycle | `v` verify · `d` deep verify · `r` recreate · `x` destroy |
+| Manifest | `c` components · `m` manifest source · `w` manifest wizard |
+| Session | `q` quit |
+
+`n` sets the appliance for the current session only, so a wrong token or a
+second appliance no longer means restarting. Put the values in `.env` to keep
+them.
 
 Boxes, arrow keys and `j`/`k` all work. Output longer than the screen can be
 scrolled. Set `NO_COLOR=1` to drop the color styling.

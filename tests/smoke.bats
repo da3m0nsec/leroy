@@ -356,10 +356,10 @@ load test_helper
     NO_COLOR=1 tui_init_palette
     LEROY_STATE_DIR="$2/state"
     tui_bootstrap_manifest
-    TUI_KEYS=(s i p a v d r x c m w q)
-    TUI_LABELS=(a b c d e f g h i j k l)
-    TUI_HINTS=(a b c d e f g h i j k l)
-    TUI_GROUPS=(INSPECT INSPECT INSPECT BUILD VALIDATE VALIDATE LIFECYCLE LIFECYCLE CONFIGURE CONFIGURE CONFIGURE SESSION)
+    TUI_KEYS=(n s p i a v d r x c m w q)
+    TUI_LABELS=(a b c d e f g h i j k l m)
+    TUI_HINTS=(a b c d e f g h i j k l m)
+    TUI_GROUPS=(CONNECTION CONNECTION PLAN PLAN BUILD LIFECYCLE LIFECYCLE LIFECYCLE LIFECYCLE MANIFEST MANIFEST MANIFEST SESSION)
     tui_render 0 | sed "s/\x1b\[[0-9;?]*[a-zA-Z]//g" | wc -l
   ' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR"
   [ "$status" -eq 0 ]

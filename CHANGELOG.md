@@ -23,10 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Landing page in front of the builder explaining the tool, how it works, the seven blocks it deploys and the security model, with copyable `curl` and `wget` commands that install the CLI. The builder opens from it and is deep-linkable at `#constructor`.
 - Graphical manifest builder under `web/`, deployed to GitHub Pages: a canvas of draggable boxes wired by the dependencies Leroy applies, with demo scenarios for platform, banking, retail, telco and public sector, persona and permission editing, live validation against the same rules as `leroy.sh`, and manifest import and export.
 - `make web` serves the builder locally and `make web-manifests` prints each scenario's manifest.
+- TUI action to configure the appliance URL and token without leaving the dashboard, for a wrong token or a second appliance. The token is read hidden and never displayed back, and the values apply to the session only.
 - A project-local `.env` is read on start, with no sourcing or exporting. It is parsed rather than sourced: only Leroy's own settings are read, `export` prefixes, quotes and CRLF endings are tolerated, and a value is never evaluated. `LEROY_ENV_FILE` points it elsewhere or, when empty, skips it.
 
 ### Changed
 
+- TUI actions are grouped by what an operator is doing rather than by internal category: connection, plan, build, lifecycle and manifest, with verification folded into lifecycle.
 - Missing URL and token values are requested interactively instead of immediately failing.
 - TLS certificate verification now defaults to disabled.
 - Role feature access uses the valid access type advertised by the Morpheus base role.
