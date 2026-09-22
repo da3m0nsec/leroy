@@ -6,8 +6,8 @@ A graphical manifest builder for HPE Morpheus demonstrations. It produces a
 schema 2 JSON manifest that Leroy applies without conversion:
 
 ```bash
-leroy demo plan  --file my-demo.json
-leroy demo apply --file my-demo.json
+./leroy.sh demo plan  --file my-demo.json
+./leroy.sh demo apply --file my-demo.json
 ```
 
 The page has two views. The landing explains the tool, how it works, what it

@@ -662,3 +662,57 @@ load test_helper
   [ "$status" -eq 0 ]
   [ "$output" = "ok" ]
 }
+
+@test "a project-local .env is read without sourcing it" {
+  cd "$BATS_TEST_TMPDIR"
+  printf 'MORPHEUS_URL=https://from-env.example.test\nMORPHEUS_API_TOKEN=env-token\n' >.env
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN bash -c '
+    source "$1"; load_config ""; printf "%s|%s|%s\n" "$MORPHEUS_URL" "$MORPHEUS_API_TOKEN" "$MASTER_TOKEN"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"https://from-env.example.test|env-token|env-token"* ]]
+}
+
+@test ".env parsing handles quotes, export, CRLF and ignores foreign keys" {
+  cd "$BATS_TEST_TMPDIR"
+  printf '# a comment\n\nexport MORPHEUS_URL="https://quoted.example.test"\r\nMORPHEUS_API_TOKEN=  spaced  \nLEROY_OUTPUT=%s\nDATABASE_URL=postgres://secret\nnot a pair\n' "'json'" >.env
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN bash -c '
+    source "$1"; load_config ""
+    printf "%s|%s|%s|%s\n" "$MORPHEUS_URL" "$MORPHEUS_API_TOKEN" "$LEROY_OUTPUT" "${DATABASE_URL-unset}"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"https://quoted.example.test|spaced|json|unset"* ]]
+}
+
+@test "a .env cannot execute code and exported variables still win" {
+  cd "$BATS_TEST_TMPDIR"
+  printf 'MORPHEUS_URL=$(touch %s/pwned)\nMORPHEUS_API_TOKEN=`touch %s/pwned2`\n' "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" >.env
+  run env -u MORPHEUS_URL -u MORPHEUS_API_TOKEN bash -c '
+    source "$1"; load_config ""; printf "%s\n" "$MORPHEUS_URL"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'$(touch'* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/pwned" ]
+  [ ! -e "$BATS_TEST_TMPDIR/pwned2" ]
+
+  printf 'MORPHEUS_URL=https://from-file.example.test\n' >.env
+  run env MORPHEUS_URL=https://exported.example.test bash -c '
+    source "$1"; load_config ""; printf "%s\n" "$MORPHEUS_URL"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"https://exported.example.test"* ]]
+}
+
+@test "LEROY_ENV_FILE redirects or disables the environment file" {
+  cd "$BATS_TEST_TMPDIR"
+  printf 'MORPHEUS_URL=https://default-name.example.test\n' >.env
+  printf 'MORPHEUS_URL=https://other-name.example.test\n' >other.env
+  run env -u MORPHEUS_URL LEROY_ENV_FILE=other.env bash -c '
+    source "$1"; load_config ""; printf "%s\n" "$MORPHEUS_URL"
+  ' _ "$LEROY_BIN"
+  [[ "$output" == *"https://other-name.example.test"* ]]
+  run env -u MORPHEUS_URL LEROY_ENV_FILE= bash -c '
+    source "$1"; load_config ""; printf "[%s]\n" "$MORPHEUS_URL"
+  ' _ "$LEROY_BIN"
+  [[ "$output" == *"[]"* ]]
+}

@@ -10,33 +10,35 @@ Design the demonstration in the browser, download the manifest, apply it with
 one command. The whole tool is a single Bash script.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh -o leroy && chmod +x leroy
+curl -fsSL https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh -O && chmod +x leroy.sh
 export MORPHEUS_URL="https://morpheus.example.com"
 export MORPHEUS_API_TOKEN="a-master-tenant-admin-token"
-./leroy demo apply --file my-demo.json
+./leroy.sh demo apply --file my-demo.json
 ```
 
 Needs Bash 4.4+, `curl`, `jq`, and a Master Tenant administrator token on
 Morpheus 9. Tokens are read from the environment, never from arguments.
+`make install` puts the same script on your `PATH` as `leroy`, if you prefer
+that to running it from the checkout.
 
 ## Three ways in, one behavior
 
 | | How | For |
 | --- | --- | --- |
 | **Builder** | [the page above](https://da3m0nsec.github.io/leroy/), or `make web` locally | Designing a demo without writing JSON |
-| **TUI** | `./leroy` | Guided operation with confirmations |
-| **CLI** | `./leroy demo …` | Scripts, CI and automation |
+| **TUI** | `./leroy.sh` | Guided operation with confirmations |
+| **CLI** | `./leroy.sh demo …` | Scripts, CI and automation |
 
 The TUI and CLI call the same functions, so they cannot drift apart.
 
 ## Demo lifecycle
 
 ```bash
-./leroy demo preset > my-demo.json        # built-in manifest to start from
-./leroy demo plan    --file my-demo.json  # preview; changes nothing
-./leroy demo apply   --file my-demo.json  # build; resumable if interrupted
-./leroy demo verify  --file my-demo.json --deep
-./leroy demo destroy --demo-id my-demo --yes
+./leroy.sh demo preset > my-demo.json        # built-in manifest to start from
+./leroy.sh demo plan    --file my-demo.json  # preview; changes nothing
+./leroy.sh demo apply   --file my-demo.json  # build; resumable if interrupted
+./leroy.sh demo verify  --file my-demo.json --deep
+./leroy.sh demo destroy --demo-id my-demo --yes
 ```
 
 `verify` checks that every recorded resource still exists and is Leroy's.
@@ -50,8 +52,8 @@ needed), `demo wizard`, `demo recreate`, and `demo preset --schema 2`.
 Destructive commands need explicit confirmation and only touch resources whose
 recorded ID **and** remote ownership marker both match.
 
-Read-only commands: `./leroy status` checks authentication and connectivity,
-`./leroy environments list` and `environments get ID` read environment labels.
+Read-only commands: `./leroy.sh status` checks authentication and connectivity,
+`./leroy.sh environments list` and `environments get ID` read environment labels.
 Add `--output json` to any of them to pipe into `jq`.
 
 ## What it builds
@@ -87,7 +89,7 @@ form.
 
 ## TUI
 
-Run `./leroy` with no arguments. The dashboard reports the appliance, the
+Run `./leroy.sh` with no arguments. The dashboard reports the appliance, the
 authenticated identity, the active manifest and its demo, the component
 selection, and the state of that deployment.
 
@@ -110,6 +112,10 @@ scrolled. Set `NO_COLOR=1` to drop the color styling.
   keys outright.
 - Tokens come from `MORPHEUS_API_TOKEN` or a `0600` config file, never from
   command-line arguments, which other users can read.
+- A `.env` is read from the working directory, so treat it like any other file
+  you would not run blindly: Leroy never executes it, but a stray one could
+  still point `MORPHEUS_URL` somewhere unexpected. It says which file it loaded,
+  and `status` prints the appliance it is talking to.
 - Everything Leroy creates carries an ownership marker. `destroy` verifies it
   before deleting and stops if anything does not match.
 - TLS verification defaults to **off** for appliances with internal
@@ -121,9 +127,24 @@ permissions and holds resource IDs, never passwords.
 
 ## Configuration
 
-Values resolve from built-in defaults, then
-`${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config`, then `--config FILE`, then
-exported `MORPHEUS_*` variables. See
+Put a `.env` next to the script and Leroy picks it up on its own, with no
+sourcing or exporting:
+
+```bash
+cp .env.example .env && chmod 600 .env
+$EDITOR .env
+./leroy.sh status
+```
+
+That file is **parsed, not sourced**: only Leroy's own settings are read, every
+other key is ignored, and nothing in it is ever executed. Because it is read
+from the working directory, Leroy logs which file it loaded. Point
+`LEROY_ENV_FILE` elsewhere to use another name, or set it empty to skip the
+file entirely.
+
+Values resolve from built-in defaults, then `.env`, then
+`${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config` or `--config FILE`, then
+exported `MORPHEUS_*` variables, which always win. See
 [`config/leroy.conf.example`](config/leroy.conf.example). Missing values are
 requested interactively when a terminal is available; automation still fails
 without prompting.
