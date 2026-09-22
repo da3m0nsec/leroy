@@ -6,6 +6,8 @@ Leroy is a Bash application that presents one Morpheus management capability thr
 
 The demo lifecycle builds a dependency-ordered, operator-selected set of Morpheus 9 resources. Plan is read-only, apply records each successful mutation atomically, and destroy verifies local state plus remote ownership before deleting in reverse dependency order.
 
+A resource that exists on the appliance but is missing from local state is adopted rather than treated as a conflict, provided it carries this demo's ownership marker; when a list response omits the description the full object is fetched before deciding. That is what makes a rebuild after losing state work. A resource that merely shares a name carries no marker and still conflicts, which is the case `--force` exists for.
+
 ## Design principles
 
 1. **One behavior, two interfaces.** TUI actions call command functions rather than duplicating API requests.

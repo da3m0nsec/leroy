@@ -78,6 +78,8 @@ Morpheus. A rejection surfaces as exit code 5 with the API message.
 | AV-050 | `GET /api/cypher/password/24/<demo>/<user>` generates a password on read | A password is returned and never written to state, manifests, or logs |
 | AV-051 | `GET /api/cypher?list=true&key=<exact>` does not generate a key | Planning a fresh demo shows `create`, never a false `conflict` (LRY-003) |
 | AV-052 | Adoption of an existing Leroy-owned key | A second plan shows `adopt` or `unchanged` |
+| AV-054 | Adoption of non-Cypher resources after state is lost | Delete the state file and replan: resources carrying the marker show `adopt`, and apply records their existing IDs rather than creating duplicates |
+| AV-055 | The marker is visible in list responses | If `/api/roles?name=` omits `description`, adoption falls back to fetching the object; confirm that path is exercised at most once per resource |
 | AV-053 | Cypher deletion during destroy | The key is gone; unrelated keys are untouched |
 
 ## RBAC and deep verification

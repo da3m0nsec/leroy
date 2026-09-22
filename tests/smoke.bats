@@ -716,3 +716,87 @@ load test_helper
   ' _ "$LEROY_BIN"
   [[ "$output" == *"[]"* ]]
 }
+
+@test "the manifest prompt draws on screen and answers through a variable" {
+  run bash -c '
+    source "$1"
+    tui_action_header() { printf "MANIFEST FILE SCREEN\n"; }
+    tui_wait() { :; }
+    tui_prompt_manifest_path <<<"$2"
+    printf "ANSWER=[%s]\n" "$TUI_PROMPTED_PATH"
+  ' _ "$LEROY_BIN" "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"MANIFEST FILE SCREEN"* ]]
+  [[ "$output" == *"Enter a path to a manifest file"* ]]
+  [[ "$output" == *"ANSWER=[$LEROY_BIN]"* ]]
+}
+
+@test "the manifest prompt rejects an unreadable path and cancels on an empty one" {
+  run bash -c '
+    source "$1"
+    tui_action_header() { :; }; tui_wait() { :; }
+    tui_prompt_manifest_path <<<"/nowhere/missing.json" && printf "UNEXPECTED\n"
+    printf "rc=%s answer=[%s]\n" "$?" "$TUI_PROMPTED_PATH"
+    tui_prompt_manifest_path <<<"" && printf "UNEXPECTED\n"
+    printf "rc=%s\n" "$?"
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No readable file at: /nowhere/missing.json"* ]]
+  [[ "$output" == *"answer=[]"* ]]
+}
+
+@test "a resource carrying this demo's marker is adopted, a foreign one conflicts" {
+  run bash -c '
+    source "$1"
+    CURRENT_MARKER="Managed by Leroy demo:leroy-demo"
+    STATE_FILE="$2/state.json"
+    state_resource() { return 0; }
+    resource_id() { printf "7\n"; }
+    spec='"'"'{"key":"role:tenant","type":"role","scope":"master","name":"Leroy Demo Organization Tenant Role","spec":{"kind":"account"}}'"'"'
+    find_remote() { printf "%s\n" "{\"id\":55,\"name\":\"Leroy Demo Organization Tenant Role\",\"description\":\"Managed by Leroy demo:leroy-demo\"}"; }
+    desired_action "$spec"; printf "\n"
+    find_remote() { printf "%s\n" "{\"id\":55,\"name\":\"Leroy Demo Organization Tenant Role\",\"description\":\"Customer role\"}"; }
+    api_request() { return 6; }
+    desired_action "$spec"; printf "\n"
+    find_remote() { printf "" ; }
+    desired_action "$spec"; printf "\n"
+  ' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "adopt" ]
+  [ "${lines[1]}" = "conflict" ]
+  [ "${lines[2]}" = "create" ]
+}
+
+@test "a list response without the description is confirmed against the full object" {
+  run bash -c '
+    source "$1"
+    CURRENT_MARKER="Managed by Leroy demo:leroy-demo"
+    state_resource() { return 0; }
+    resource_id() { printf "7\n"; }
+    find_remote() { printf "%s\n" "{\"id\":55,\"name\":\"Leroy Demo Organization Tenant Role\"}"; }
+    api_request() {
+      [[ "$2" == "/api/roles/55" ]] || return 6
+      printf "%s\n" "{\"role\":{\"id\":55,\"description\":\"Managed by Leroy demo:leroy-demo\"}}"
+    }
+    desired_action '"'"'{"key":"role:tenant","type":"role","scope":"master","name":"Leroy Demo Organization Tenant Role","spec":{"kind":"account"}}'"'"'
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 0 ]
+  [ "$output" = "adopt" ]
+}
+
+@test "applying an adopted resource records its remote ID instead of creating one" {
+  local state="$BATS_TEST_TMPDIR/state.json"
+  printf '%s\n' '{"stateVersion":1,"applianceUrl":"https://m.test","resources":[]}' >"$state"
+  run bash -c '
+    source "$1"; STATE_FILE="$2"; CURRENT_MARKER="Managed by Leroy demo:leroy-demo"
+    desired_action() { printf "adopt\n"; }
+    find_remote() { printf "%s\n" "{\"id\":55,\"name\":\"Leroy Demo Organization Tenant Role\"}"; }
+    configure_role_permissions() { :; }
+    api_request() { printf "CREATE WAS CALLED\n"; return 1; }
+    apply_one '"'"'{"key":"role:tenant","type":"role","scope":"master","name":"Leroy Demo Organization Tenant Role","spec":{"kind":"account","profile":"tenant-root"}}'"'"'
+    jq -r ".resources[0] | \"\(.key) \(.id)\"" "$2"
+  ' _ "$LEROY_BIN" "$state"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"CREATE WAS CALLED"* ]]
+  [[ "$output" == *"role:tenant 55"* ]]
+}
