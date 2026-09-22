@@ -169,9 +169,9 @@ leroy demo verify --deep                    # AV-060..AV-065
 leroy demo destroy --demo-id leroy-demo --yes  # AV-053, AV-074
 
 # then a schema 2 manifest from the builder, with a fourth persona
-leroy demo plan   --file banca-demo.json     # AV-100
-leroy demo apply  --file banca-demo.json     # AV-101..AV-105, AV-108
-leroy demo verify --file banca-demo.json --deep   # AV-106, AV-107
+leroy demo plan   --file banking-demo.json     # AV-100
+leroy demo apply  --file banking-demo.json     # AV-101..AV-105, AV-108
+leroy demo verify --file banking-demo.json --deep   # AV-106, AV-107
 # then rename one resource in the Morpheus UI, rebuild, and retry destroy for AV-073 and AV-078
 ```
 

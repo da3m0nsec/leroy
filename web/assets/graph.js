@@ -10,6 +10,10 @@ const ORIGIN_Y = 32;
 // Edges mirror real ordering in leroy.sh: the tenant role is created before the
 // tenant, users are created inside it, policies reference group IDs, and the
 // workflow binds the task and the input that the catalog item then exposes.
+function plural(count, singular, plural_) {
+  return `${count} ${count === 1 ? singular : plural_}`;
+}
+
 export function buildGraph(state) {
   const f = state.features;
   const nodes = [];
@@ -18,46 +22,46 @@ export function buildGraph(state) {
 
   push({
     id: 'tenant-role', column: 0, row: 0, group: 'rbac',
-    title: 'Rol de tenant', subtitle: 'Rol de cuenta para la organización',
+    title: 'Tenant role', subtitle: 'Account role for the organization',
     feature: 'multitenancy', count: 1, chips: ['/api/roles'],
   });
   push({
     id: 'tenant', column: 1, row: 0, group: 'rbac',
-    title: 'Tenant', subtitle: state.tenant.name || 'Sin nombre',
-    feature: 'multitenancy', count: 1, chips: [state.tenant.subdomain || 'sin subdominio', '/api/accounts'],
+    title: 'Tenant', subtitle: state.tenant.name || 'Unnamed',
+    feature: 'multitenancy', count: 1, chips: [state.tenant.subdomain || 'no subdomain', '/api/accounts'],
   });
   edges.push(['tenant-role', 'tenant']);
 
   state.personas.forEach((persona, index) => {
     const id = `persona:${persona.key}`;
     const chips = [persona.profile];
-    if (persona.permissions.length > 0) chips.push(`${persona.permissions.length} permiso(s)`);
-    if (persona.runsWorkflow) chips.push('ejecuta el flujo');
-    if (persona.catalogAccess === false) chips.push('sin catálogo');
+    if (persona.permissions.length > 0) chips.push(plural(persona.permissions.length, 'permission', 'permissions'));
+    if (persona.runsWorkflow) chips.push('runs the workflow');
+    if (persona.catalogAccess === false) chips.push('no catalog');
     push({
       id, column: 2, row: index, group: 'persona',
-      title: persona.key, subtitle: persona.username || 'sin usuario',
+      title: persona.key, subtitle: persona.username || 'no username',
       feature: 'roles', count: 3, chips,
-      detail: 'rol, Cypher, usuario',
+      detail: 'role, Cypher, user',
     });
     edges.push(['tenant', id]);
   });
 
   push({
     id: 'environments', column: 0, row: 1, group: 'infra',
-    title: 'Entornos', subtitle: `${state.environments.length} etiqueta(s) de entorno`,
+    title: 'Environments', subtitle: plural(state.environments.length, 'environment label', 'environment labels'),
     feature: 'environments', count: state.environments.length,
     chips: state.environments.slice(0, 3).map((item) => item.code),
   });
   push({
     id: 'groups', column: 1, row: 1, group: 'infra',
-    title: 'Grupos', subtitle: `${state.groups.length} grupo(s) de infraestructura`,
+    title: 'Groups', subtitle: plural(state.groups.length, 'infrastructure group', 'infrastructure groups'),
     feature: 'groups', count: state.groups.length,
     chips: state.groups.slice(0, 3).map((item) => item.code),
   });
   push({
     id: 'policies', column: 1, row: 2, group: 'infra',
-    title: 'Políticas', subtitle: `${state.policies.length} política(s) de gobierno`,
+    title: 'Policies', subtitle: plural(state.policies.length, 'governance policy', 'governance policies'),
     feature: 'policies', count: state.policies.length,
     chips: state.policies.slice(0, 4).map((item) => item.type),
   });
@@ -65,25 +69,25 @@ export function buildGraph(state) {
 
   push({
     id: 'input', column: 3, row: 0, group: 'automation',
-    title: 'Entrada', subtitle: state.automation.inputs[0]?.fieldName || 'sin entrada',
+    title: 'Input', subtitle: state.automation.inputs[0]?.fieldName || 'no input',
     feature: 'automation', count: state.automation.inputs.length, chips: ['/api/library/option-types'],
   });
   push({
     id: 'task', column: 3, row: 1, group: 'automation',
-    title: 'Tarea', subtitle: state.automation.tasks[0]?.code || 'sin tarea',
+    title: 'Task', subtitle: state.automation.tasks[0]?.code || 'no task',
     feature: 'automation', count: state.automation.tasks.length, chips: ['groovy', '/api/tasks'],
   });
   push({
     id: 'workflow', column: 3, row: 2, group: 'automation',
-    title: 'Flujo de trabajo', subtitle: state.automation.workflows[0]?.code || 'sin flujo',
+    title: 'Workflow', subtitle: state.automation.workflows[0]?.code || 'no workflow',
     feature: 'automation', count: state.automation.workflows.length, chips: ['operation', '/api/task-sets'],
   });
   edges.push(['input', 'workflow'], ['task', 'workflow']);
 
   push({
     id: 'catalog', column: 3, row: 3, group: 'catalog',
-    title: 'Catálogo', subtitle: state.automation.catalogItems[0]?.name || 'sin elemento',
-    feature: 'catalog', count: state.automation.catalogItems.length, chips: ['autoservicio'],
+    title: 'Catalog', subtitle: state.automation.catalogItems[0]?.name || 'no item',
+    feature: 'catalog', count: state.automation.catalogItems.length, chips: ['self-service'],
   });
   edges.push(['workflow', 'catalog'], ['input', 'catalog']);
   for (const persona of state.personas) {
@@ -185,7 +189,7 @@ export class Canvas {
     element.dataset.id = node.id;
     element.tabIndex = 0;
     element.classList.toggle('is-off', !enabled);
-    element.setAttribute('aria-label', `${node.title}, ${enabled ? 'activo' : 'desactivado'}`);
+    element.setAttribute('aria-label', `${node.title}, ${enabled ? 'enabled' : 'disabled'}`);
 
     const header = document.createElement('header');
     const title = document.createElement('h3');
@@ -195,7 +199,7 @@ export class Canvas {
     toggle.className = 'node__toggle';
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-checked', String(enabled));
-    toggle.title = enabled ? 'Desactivar este bloque' : 'Activar este bloque';
+    toggle.title = enabled ? 'Switch this block off' : 'Switch this block on';
     toggle.addEventListener('click', (event) => {
       event.stopPropagation();
       this.handlers.onToggle(node.feature);
@@ -216,7 +220,9 @@ export class Canvas {
 
     const count = document.createElement('span');
     count.className = 'node__count';
-    count.textContent = node.detail ? `${node.count} recursos: ${node.detail}` : `${node.count} recurso(s)`;
+    count.textContent = node.detail
+      ? `${node.count} resources: ${node.detail}`
+      : plural(node.count, 'resource', 'resources');
 
     element.append(header, subtitle, chips, count);
     element.addEventListener('pointerdown', (event) => this.#startDrag(event, node, element));

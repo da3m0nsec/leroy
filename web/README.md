@@ -1,73 +1,71 @@
-# Constructor de demos Leroy
+# Leroy demo builder
 
-Publicado en **https://da3m0nsec.github.io/leroy/**
+Published at **https://da3m0nsec.github.io/leroy/**
 
-Constructor gráfico de manifiestos para demostraciones de HPE Morpheus. Produce
-un manifiesto JSON de esquema 2 que Leroy aplica sin conversión:
-
-```bash
-leroy demo plan  --file mi-demo.json
-leroy demo apply --file mi-demo.json
-```
-
-La página tiene dos vistas. La portada explica la herramienta, cómo funciona,
-qué despliega y cómo instalar la CLI, con órdenes copiables de `curl` y `wget`.
-El botón «Constructor de manifiestos» abre el lienzo, que también es accesible
-directamente en `#constructor`.
-
-## Cómo se usa
-
-1. Elige un escenario de partida (plataforma, banca, retail, telco, sector público).
-2. Ajusta identidad, personas, entornos, grupos, políticas y automatización.
-3. Activa o desactiva bloques con el interruptor de cada caja del lienzo.
-4. Descarga el manifiesto o copia el JSON, y aplícalo con Leroy.
-
-Las cajas se arrastran, se seleccionan para editarlas y se mueven con las
-flechas del teclado cuando tienen el foco. Las líneas dibujan las dependencias
-reales que Leroy aplica: el rol de tenant antes del tenant, los usuarios dentro
-de él, las políticas sobre los grupos, y la entrada y la tarea dentro del flujo
-que el catálogo expone.
-
-El trabajo en curso se guarda en el navegador. Ningún dato sale de la página:
-no hay servidor, ni analítica, ni llamadas a Morpheus. Un manifiesto nunca
-contiene contraseñas; Leroy las genera con Cypher en el momento de aplicar.
-
-## Desarrollo
+A graphical manifest builder for HPE Morpheus demonstrations. It produces a
+schema 2 JSON manifest that Leroy applies without conversion:
 
 ```bash
-make web            # sirve el constructor en http://localhost:8765/
-make web-manifests  # imprime el manifiesto de cada escenario
-make check          # incluye los cruces entre el constructor y leroy.sh
+leroy demo plan  --file my-demo.json
+leroy demo apply --file my-demo.json
 ```
 
-No hay compilación ni dependencias: HTML, CSS y módulos ES servidos tal cual,
-igual que el resto del proyecto se limita a bash, curl y jq.
+The page has two views. The landing explains the tool, how it works, what it
+deploys and how to install the CLI, with copyable `curl` and `wget` commands.
+The "Manifest builder" button opens the canvas, which is also reachable
+directly at `#builder`.
 
-| Archivo | Responsabilidad |
+## How to use it
+
+1. Pick a starting scenario (platform, banking, retail, telco, public sector).
+2. Adjust identity, personas, environments, groups, policies and automation.
+3. Switch blocks on and off with the toggle on each box of the canvas.
+4. Download the manifest or copy the JSON, and apply it with Leroy.
+
+Boxes drag, select for editing, and move with the arrow keys when focused. The
+lines draw the dependencies Leroy actually applies: the tenant role before the
+tenant, the users inside it, the policies over the groups, and the input and
+the task inside the workflow the catalog exposes.
+
+Work in progress is saved in the browser. No data leaves the page: there is no
+server, no analytics and no calls to Morpheus. A manifest never contains
+passwords; Leroy generates them with Cypher at apply time.
+
+## Development
+
+```bash
+make web            # serves the builder at http://localhost:8765/
+make web-manifests  # prints each scenario's manifest
+make check          # includes the cross-checks between the builder and leroy.sh
+```
+
+No build step and no dependencies: HTML, CSS and ES modules served as they are,
+the same way the rest of the project sticks to bash, curl and jq.
+
+| File | Responsibility |
 | --- | --- |
-| `index.html` | Portada y constructor, en una sola página con dos vistas. |
-| `assets/schema.js` | Modelo del manifiesto, reglas de dependencias y validación. |
-| `assets/scenarios.js` | Escenarios de demostración. |
-| `assets/graph.js` | Lienzo: cajas, aristas, arrastre y zoom. |
-| `assets/app.js` | Vistas, inspector, validación, vista previa e importación y exportación. |
-| `tools/emit-manifests.mjs` | Ejecuta la lógica del constructor fuera del navegador, para las pruebas. |
+| `index.html` | Landing and builder, one page with two views. |
+| `assets/schema.js` | Manifest model, dependency rules and validation. |
+| `assets/scenarios.js` | Demonstration scenarios. |
+| `assets/graph.js` | Canvas: boxes, edges, dragging and zoom. |
+| `assets/app.js` | Views, inspector, validation, preview, import and export. |
+| `tools/emit-manifests.mjs` | Runs the builder logic outside the browser, for the tests. |
 
-## Por qué la validación está duplicada
+## Why the validation is duplicated
 
-`assets/schema.js` repite las reglas de `validate_manifest` de `leroy.sh`. Es
-duplicación deliberada: el constructor es estático y no puede ejecutar bash. Si
-cambias las reglas en `leroy.sh`, cámbialas aquí también. `make check` ejecuta
-cada escenario a través de `validate_manifest` y compara el recuento de
-recursos de ambas implementaciones, así que una divergencia rompe CI.
+`assets/schema.js` restates the rules of `validate_manifest` in `leroy.sh`. The
+duplication is deliberate: the builder is static and cannot run bash. If you
+change the rules in `leroy.sh`, change them here too. `make check` runs every
+scenario through `validate_manifest` and compares the resource counts of both
+implementations, so a divergence breaks CI.
 
-## Publicación
+## Publishing
 
-`.github/workflows/pages.yml` publica este directorio en GitHub Pages en cada
-push a `main` que toque `web/`. Requiere que Pages esté configurado en el
-repositorio con origen «GitHub Actions».
+`.github/workflows/pages.yml` publishes this directory to GitHub Pages on every
+push to `main` that touches `web/`. It requires Pages to be configured in the
+repository with "GitHub Actions" as the source.
 
-La portada ofrece la CLI desde
-`https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh`, es decir la
-rama por defecto. Cuando el proyecto publique versiones etiquetadas, conviene
-cambiar esa URL a una etiqueta para que la orden de instalación sea
-reproducible.
+The landing offers the CLI from
+`https://raw.githubusercontent.com/da3m0nsec/leroy/main/leroy.sh`, that is, the
+default branch. Once the project publishes tagged releases, that URL should
+point at a tag so the install command is reproducible.

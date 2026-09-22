@@ -8,15 +8,15 @@ import { Canvas, buildGraph } from './graph.js';
 const STORAGE_KEY = 'leroy-builder.state.v1';
 const FEATURE_LABELS = {
   multitenancy: 'Multitenancy',
-  roles: 'Roles y usuarios',
-  environments: 'Entornos',
-  groups: 'Grupos',
-  policies: 'Políticas',
-  automation: 'Automatización',
-  catalog: 'Catálogo',
+  roles: 'Roles and users',
+  environments: 'Environments',
+  groups: 'Groups',
+  policies: 'Policies',
+  automation: 'Automation',
+  catalog: 'Catalog',
 };
 
-let state = scenarioById('plataforma').build();
+let state = scenarioById('platform').build();
 let selected = 'tenant';
 let canvas;
 
@@ -122,16 +122,16 @@ function inspectorFor(id) {
   panel.className = 'inspector';
   if (id === 'tenant' || id === 'tenant-role') return tenantInspector(panel);
   if (id.startsWith('persona:')) return personaInspector(panel, id.slice('persona:'.length));
-  if (id === 'environments') return listInspector(panel, 'Entornos', state.environments, environmentFields, () => ({
-    name: 'Nuevo entorno', code: `${state.metadata.id}-nuevo`, visibility: 'private',
+  if (id === 'environments') return listInspector(panel, 'Environments', state.environments, environmentFields, () => ({
+    name: 'New environment', code: `${state.metadata.id}-new`, visibility: 'private',
   }));
-  if (id === 'groups') return listInspector(panel, 'Grupos', state.groups, groupFields, () => ({
-    name: 'Nuevo grupo', code: `${state.metadata.id}-nuevo`, location: 'Sin ubicación',
+  if (id === 'groups') return listInspector(panel, 'Groups', state.groups, groupFields, () => ({
+    name: 'New group', code: `${state.metadata.id}-new`, location: 'No location',
   }));
   if (id === 'policies') return policiesInspector(panel);
   if (id === 'input' || id === 'task' || id === 'workflow') return automationInspector(panel, id);
   if (id === 'catalog') return catalogInspector(panel);
-  panel.append(hint('Selecciona una caja del lienzo para editarla.'));
+  panel.append(hint('Select a box on the canvas to edit it.'));
   return panel;
 }
 
@@ -144,87 +144,87 @@ function hint(text) {
 
 function tenantInspector(panel) {
   panel.append(sectionTitle('Tenant'));
-  panel.append(hint('Sin multitenancy, el contenido seleccionado se crea en el Master Tenant y los payloads omiten la cuenta del tenant.'));
-  panel.append(textField('Nombre de la organización', state.tenant.name, (value) => {
+  panel.append(hint('Without multitenancy, the selected content is created in the Master Tenant and payloads omit the tenant account.'));
+  panel.append(textField('Organization name', state.tenant.name, (value) => {
     state.tenant.name = value;
     state.metadata.name = value;
   }));
-  panel.append(textField('Subdominio', state.tenant.subdomain, (value) => { state.tenant.subdomain = value; }, { mono: true }));
-  panel.append(hint(`Las personas inician sesión como subdominio\\usuario, por ejemplo ${state.tenant.subdomain || 'subdominio'}\\${state.personas[0]?.username || 'usuario'}.`));
+  panel.append(textField('Subdomain', state.tenant.subdomain, (value) => { state.tenant.subdomain = value; }, { mono: true }));
+  panel.append(hint(`Personas log in as subdomain\\username, for example ${state.tenant.subdomain || 'subdomain'}\\${state.personas[0]?.username || 'username'}.`));
   return panel;
 }
 
 function personaInspector(panel, key) {
   const persona = state.personas.find((item) => item.key === key);
   if (!persona) return panel;
-  const remove = iconButton('Eliminar', () => {
+  const remove = iconButton('Remove', () => {
     state.personas = state.personas.filter((item) => item !== persona);
     selected = 'tenant';
     refresh();
   }, 'danger');
   panel.append(sectionTitle(`Persona: ${persona.key}`, state.personas.length > 1 ? remove : null));
-  panel.append(hint('Cada persona genera tres recursos: un rol, una clave Cypher con su contraseña y un usuario.'));
-  panel.append(textField('Clave', persona.key, (value) => { persona.key = value; selected = `persona:${value}`; }, { mono: true }));
-  panel.append(textField('Nombre del rol', persona.role, (value) => { persona.role = value; }));
-  panel.append(textField('Usuario', persona.username, (value) => { persona.username = value; }, { mono: true }));
-  panel.append(textField('Correo', persona.email, (value) => { persona.email = value; }, { mono: true }));
-  panel.append(selectField('Perfil', persona.profile, PROFILES, (value) => { persona.profile = value; }));
-  panel.append(switchField('Acceso al catálogo', persona.catalogAccess !== false, (value) => { persona.catalogAccess = value; },
-    'Concede el elemento de catálogo a este rol.'));
-  panel.append(switchField('Ejecuta el flujo', Boolean(persona.runsWorkflow), (value) => {
+  panel.append(hint('Each persona produces three resources: a role, a Cypher key holding its password, and a user.'));
+  panel.append(textField('Key', persona.key, (value) => { persona.key = value; selected = `persona:${value}`; }, { mono: true }));
+  panel.append(textField('Role name', persona.role, (value) => { persona.role = value; }));
+  panel.append(textField('Username', persona.username, (value) => { persona.username = value; }, { mono: true }));
+  panel.append(textField('Email', persona.email, (value) => { persona.email = value; }, { mono: true }));
+  panel.append(selectField('Profile', persona.profile, PROFILES, (value) => { persona.profile = value; }));
+  panel.append(switchField('Catalog access', persona.catalogAccess !== false, (value) => { persona.catalogAccess = value; },
+    'Grants the catalog item to this role.'));
+  panel.append(switchField('Runs the workflow', Boolean(persona.runsWorkflow), (value) => {
     for (const item of state.personas) item.runsWorkflow = false;
     persona.runsWorkflow = value;
-  }, 'La verificación profunda ejecuta el flujo como esta persona.'));
+  }, 'Deep verification runs the workflow as this persona.'));
 
-  panel.append(sectionTitle('Permisos', iconButton('Añadir', () => {
+  panel.append(sectionTitle('Permissions', iconButton('Add', () => {
     persona.permissions.push({ pattern: '', access: 'source' });
     refresh();
   })));
-  panel.append(hint('Cada patrón es una expresión regular que Leroy compara, sin distinguir mayúsculas, con el nombre y el código de los permisos que anuncia el rol base de Morpheus. Sin permisos, se usan las reglas integradas del perfil.'));
+  panel.append(hint('Each pattern is a regular expression Leroy matches, case-insensitively, against the name and code of the permissions the Morpheus base role advertises. With no permissions, the profile\u2019s built-in rules are used.'));
   for (const rule of persona.permissions) {
     const row = document.createElement('div');
     row.className = 'rule';
-    row.append(textField('Patrón', rule.pattern, (value) => { rule.pattern = value; }, { mono: true, placeholder: 'catalog|service catalog' }));
-    row.append(selectField('Acceso', rule.access, ACCESS_LEVELS, (value) => { rule.access = value; }));
-    row.append(iconButton('Quitar', () => {
+    row.append(textField('Pattern', rule.pattern, (value) => { rule.pattern = value; }, { mono: true, placeholder: 'catalog|service catalog' }));
+    row.append(selectField('Access', rule.access, ACCESS_LEVELS, (value) => { rule.access = value; }));
+    row.append(iconButton('Remove', () => {
       persona.permissions = persona.permissions.filter((item) => item !== rule);
       refresh();
     }, 'danger'));
     panel.append(row);
   }
 
-  panel.append(sectionTitle('Verificación'));
-  panel.append(hint('Rutas que comprueba leroy demo verify --deep iniciando sesión como esta persona.'));
-  panel.append(textField('Debe poder acceder a', persona.verify.allow, (value) => { persona.verify.allow = value; }, { mono: true, placeholder: '/api/whoami' }));
-  panel.append(textField('No debe poder acceder a', persona.verify.deny, (value) => { persona.verify.deny = value; }, { mono: true, placeholder: '/api/tasks?max=1' }));
+  panel.append(sectionTitle('Verification'));
+  panel.append(hint('Paths leroy demo verify --deep checks while logged in as this persona.'));
+  panel.append(textField('Must be able to reach', persona.verify.allow, (value) => { persona.verify.allow = value; }, { mono: true, placeholder: '/api/whoami' }));
+  panel.append(textField('Must not be able to reach', persona.verify.deny, (value) => { persona.verify.deny = value; }, { mono: true, placeholder: '/api/tasks?max=1' }));
   return panel;
 }
 
 function environmentFields(item) {
   return [
-    textField('Nombre', item.name, (value) => { item.name = value; }),
-    textField('Código', item.code, (value) => { item.code = value; }, { mono: true }),
+    textField('Name', item.name, (value) => { item.name = value; }),
+    textField('Code', item.code, (value) => { item.code = value; }, { mono: true }),
   ];
 }
 
 function groupFields(item) {
   return [
-    textField('Nombre', item.name, (value) => { item.name = value; }),
-    textField('Código', item.code, (value) => { item.code = value; }, { mono: true }),
-    textField('Ubicación', item.location, (value) => { item.location = value; }),
+    textField('Name', item.name, (value) => { item.name = value; }),
+    textField('Code', item.code, (value) => { item.code = value; }, { mono: true }),
+    textField('Location', item.location, (value) => { item.location = value; }),
   ];
 }
 
 function listInspector(panel, title, list, fields, create) {
-  panel.append(sectionTitle(title, iconButton('Añadir', () => { list.push(create()); refresh(); })));
+  panel.append(sectionTitle(title, iconButton('Add', () => { list.push(create()); refresh(); })));
   list.forEach((item, index) => {
     const card = document.createElement('div');
     card.className = 'card';
     const head = document.createElement('div');
     head.className = 'card__head';
     const name = document.createElement('strong');
-    name.textContent = item.name || `Elemento ${index + 1}`;
-    head.append(name, iconButton('Quitar', () => {
+    name.textContent = item.name || `Item ${index + 1}`;
+    head.append(name, iconButton('Remove', () => {
       const position = list.indexOf(item);
       if (position >= 0) list.splice(position, 1);
       refresh();
@@ -232,12 +232,12 @@ function listInspector(panel, title, list, fields, create) {
     card.append(head, ...fields(item));
     panel.append(card);
   });
-  if (list.length === 0) panel.append(hint('Sin elementos. Este bloque no creará nada.'));
+  if (list.length === 0) panel.append(hint('No items. This block will create nothing.'));
   return panel;
 }
 
 function policiesInspector(panel) {
-  panel.append(sectionTitle('Políticas', iconButton('Añadir', () => {
+  panel.append(sectionTitle('Policies', iconButton('Add', () => {
     const type = POLICY_TYPES[0];
     state.policies.push({
       name: type.label, code: `${state.metadata.id}-${type.value}`, type: type.value,
@@ -245,7 +245,7 @@ function policiesInspector(panel) {
     });
     refresh();
   })));
-  panel.append(hint('Leroy resuelve el tipo de política por nombre contra /api/policy-types del appliance.'));
+  panel.append(hint('Leroy resolves the policy type by name against /api/policy-types on the appliance.'));
   for (const policy of state.policies) {
     const card = document.createElement('div');
     card.className = 'card';
@@ -253,20 +253,20 @@ function policiesInspector(panel) {
     head.className = 'card__head';
     const name = document.createElement('strong');
     name.textContent = policy.name;
-    head.append(name, iconButton('Quitar', () => {
+    head.append(name, iconButton('Remove', () => {
       state.policies = state.policies.filter((item) => item !== policy);
       refresh();
     }, 'danger'));
     card.append(head);
-    card.append(textField('Nombre', policy.name, (value) => { policy.name = value; }));
-    card.append(textField('Código', policy.code, (value) => { policy.code = value; }, { mono: true }));
-    card.append(selectField('Tipo', policy.type, POLICY_TYPES.map((item) => ({ value: item.value, label: item.label })), (value) => {
+    card.append(textField('Name', policy.name, (value) => { policy.name = value; }));
+    card.append(textField('Code', policy.code, (value) => { policy.code = value; }, { mono: true }));
+    card.append(selectField('Type', policy.type, POLICY_TYPES.map((item) => ({ value: item.value, label: item.label })), (value) => {
       policy.type = value;
       policy.config = { ...POLICY_TYPES.find((item) => item.value === value).config };
     }));
-    card.append(selectField('Ámbito', policy.scope, [
-      { value: 'tenant', label: 'Todo el tenant' },
-      { value: 'groups', label: 'Solo los grupos' },
+    card.append(selectField('Scope', policy.scope, [
+      { value: 'tenant', label: 'The whole tenant' },
+      { value: 'groups', label: 'The groups only' },
     ], (value) => { policy.scope = value; }));
     for (const [key, value] of Object.entries(policy.config)) {
       card.append(textField(key, String(value), (next) => {
@@ -283,36 +283,36 @@ function automationInspector(panel, id) {
   const task = state.automation.tasks[0];
   const workflow = state.automation.workflows[0];
   if (id === 'input' && input) {
-    panel.append(sectionTitle('Entrada del flujo'));
-    panel.append(hint('Se crea como option type con fieldContext customOptions, que es como llega al flujo.'));
-    panel.append(textField('Nombre', input.name, (value) => { input.name = value; }));
-    panel.append(textField('Campo', input.fieldName, (value) => {
+    panel.append(sectionTitle('Workflow input'));
+    panel.append(hint('Created as an option type with fieldContext customOptions, which is how it reaches the workflow.'));
+    panel.append(textField('Name', input.name, (value) => { input.name = value; }));
+    panel.append(textField('Field', input.fieldName, (value) => {
       input.fieldName = value;
       if (workflow) workflow.input = value;
       for (const item of state.automation.catalogItems) item.input = value;
     }, { mono: true }));
-    panel.append(textField('Etiqueta', input.fieldLabel, (value) => { input.fieldLabel = value; }));
-    panel.append(textField('Valor por defecto', input.defaultValue, (value) => { input.defaultValue = value; }));
+    panel.append(textField('Label', input.fieldLabel, (value) => { input.fieldLabel = value; }));
+    panel.append(textField('Default value', input.defaultValue, (value) => { input.defaultValue = value; }));
   }
   if (id === 'task' && task) {
-    panel.append(sectionTitle('Tarea'));
-    panel.append(hint('Tarea Groovy local. Se ejecuta en el appliance, sin necesidad de nube ni instancias.'));
-    panel.append(textField('Nombre', task.name, (value) => { task.name = value; }));
-    panel.append(textField('Código', task.code, (value) => {
+    panel.append(sectionTitle('Task'));
+    panel.append(hint('A local Groovy task. It runs on the appliance, with no cloud and no instances.'));
+    panel.append(textField('Name', task.name, (value) => { task.name = value; }));
+    panel.append(textField('Code', task.code, (value) => {
       task.code = value;
       if (workflow) workflow.task = value;
     }, { mono: true }));
-    panel.append(textField('Contenido', task.content, (value) => { task.content = value; }, { mono: true, textarea: true }));
+    panel.append(textField('Content', task.content, (value) => { task.content = value; }, { mono: true, textarea: true }));
   }
   if (id === 'workflow' && workflow) {
-    panel.append(sectionTitle('Flujo de trabajo'));
-    panel.append(hint('Flujo operativo que enlaza la tarea y la entrada, y que el catálogo expone.'));
-    panel.append(textField('Nombre', workflow.name, (value) => { workflow.name = value; }));
-    panel.append(textField('Código', workflow.code, (value) => {
+    panel.append(sectionTitle('Workflow'));
+    panel.append(hint('An operational workflow binding the task and the input, which the catalog exposes.'));
+    panel.append(textField('Name', workflow.name, (value) => { workflow.name = value; }));
+    panel.append(textField('Code', workflow.code, (value) => {
       workflow.code = value;
       for (const item of state.automation.catalogItems) item.workflow = value;
     }, { mono: true }));
-    panel.append(hint(`Tarea: ${workflow.task} · Entrada: ${workflow.input}`));
+    panel.append(hint(`Task: ${workflow.task} \u00b7 Input: ${workflow.input}`));
   }
   return panel;
 }
@@ -320,15 +320,15 @@ function automationInspector(panel, id) {
 function catalogInspector(panel) {
   const item = state.automation.catalogItems[0];
   if (!item) return panel;
-  panel.append(sectionTitle('Elemento de catálogo'));
-  panel.append(hint('Se concede a los roles de las personas marcadas con acceso al catálogo.'));
-  panel.append(textField('Nombre', item.name, (value) => { item.name = value; }));
-  panel.append(textField('Código', item.code, (value) => { item.code = value; }, { mono: true }));
-  panel.append(textField('Categoría', item.category, (value) => { item.category = value; }));
-  panel.append(switchField('Activo', item.enabled !== false, (value) => { item.enabled = value; }));
-  panel.append(switchField('Destacado', item.featured !== false, (value) => { item.featured = value; }));
+  panel.append(sectionTitle('Catalog item'));
+  panel.append(hint('Granted to the roles of the personas marked with catalog access.'));
+  panel.append(textField('Name', item.name, (value) => { item.name = value; }));
+  panel.append(textField('Code', item.code, (value) => { item.code = value; }, { mono: true }));
+  panel.append(textField('Category', item.category, (value) => { item.category = value; }));
+  panel.append(switchField('Enabled', item.enabled !== false, (value) => { item.enabled = value; }));
+  panel.append(switchField('Featured', item.featured !== false, (value) => { item.featured = value; }));
   const granted = state.personas.filter((persona) => persona.catalogAccess !== false).map((persona) => persona.key);
-  panel.append(hint(granted.length ? `Acceso para: ${granted.join(', ')}` : 'Ninguna persona tiene acceso al catálogo.'));
+  panel.append(hint(granted.length ? `Access for: ${granted.join(', ')}` : 'No persona has catalog access.'));
   return panel;
 }
 
@@ -336,11 +336,11 @@ function catalogInspector(panel) {
 function renderSidebar() {
   const identity = el('identity');
   identity.replaceChildren();
-  identity.append(textField('ID de la demo', state.metadata.id, (value) => {
+  identity.append(textField('Demo ID', state.metadata.id, (value) => {
     state.metadata.id = value;
     state.metadata.prefix = value;
   }, { mono: true }));
-  identity.append(textField('Organización', state.metadata.name, (value) => {
+  identity.append(textField('Organization', state.metadata.name, (value) => {
     state.metadata.name = value;
     state.tenant.name = value;
   }));
@@ -364,10 +364,10 @@ function renderValidation() {
   const status = el('status');
   if (problems.length === 0) {
     status.className = 'status status--ok';
-    status.textContent = 'Manifiesto válido para Leroy';
+    status.textContent = 'Valid manifest for Leroy';
   } else {
     status.className = 'status status--bad';
-    status.textContent = `${problems.length} problema(s) que Leroy rechazaría`;
+    status.textContent = `${problems.length} ${problems.length === 1 ? 'problem' : 'problems'} Leroy would reject`;
     for (const problem of problems) {
       const item = document.createElement('li');
       const button = document.createElement('button');
@@ -429,16 +429,16 @@ function download() {
   link.download = `${state.metadata.id}.json`;
   link.click();
   URL.revokeObjectURL(url);
-  toast(`Descargado ${state.metadata.id}.json`);
+  toast(`Downloaded ${state.metadata.id}.json`);
 }
 
 async function copy() {
   const json = JSON.stringify(buildManifest(state), null, 2);
   try {
     await navigator.clipboard.writeText(`${json}\n`);
-    toast('Manifiesto copiado al portapapeles');
+    toast('Manifest copied to the clipboard');
   } catch {
-    toast('El navegador no permitió copiar; usa Descargar');
+    toast('The browser refused to copy; use Download instead');
   }
 }
 
@@ -451,9 +451,9 @@ function importFile(file) {
       canvas.setPositions({});
       refresh();
       canvas.resetPositions();
-      toast(`Cargado ${file.name}`);
+      toast(`Loaded ${file.name}`);
     } catch (error) {
-      toast(`No se pudo leer el manifiesto: ${error.message}`);
+      toast(`Could not read the manifest: ${error.message}`);
     }
   };
   reader.readAsText(file);
@@ -488,13 +488,13 @@ function addPersona() {
 
 // --- views -----------------------------------------------------------------
 // The landing page explains the tool; the builder is one click away and
-// deep-linkable at #constructor, so a link can open it directly.
+// deep-linkable at #builder, so a link can open it directly.
 function showView(view, { push = true } = {}) {
   document.body.dataset.view = view;
   el('builder').hidden = view !== 'builder';
   el('landing').hidden = view !== 'landing';
   if (push) {
-    const hash = view === 'builder' ? '#constructor' : '#inicio';
+    const hash = view === 'builder' ? '#builder' : '#top';
     if (window.location.hash !== hash) history.pushState({ view }, '', hash);
   }
   if (view === 'builder') {
@@ -506,7 +506,7 @@ function showView(view, { push = true } = {}) {
 }
 
 function viewFromHash() {
-  return window.location.hash === '#constructor' ? 'builder' : 'landing';
+  return window.location.hash === '#builder' ? 'builder' : 'landing';
 }
 
 function wireSnippets() {
@@ -515,14 +515,14 @@ function wireSnippets() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'snippet__copy';
-    button.textContent = 'Copiar';
+    button.textContent = 'Copy';
     button.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(code.textContent);
-        button.textContent = 'Copiado';
-        setTimeout(() => { button.textContent = 'Copiar'; }, 1600);
+        button.textContent = 'Copied';
+        setTimeout(() => { button.textContent = 'Copy'; }, 1600);
       } catch {
-        toast('El navegador no permitió copiar; selecciona el texto a mano');
+        toast('The browser refused to copy; select the text manually');
       }
     });
     snippet.querySelector('.snippet__head').append(button);

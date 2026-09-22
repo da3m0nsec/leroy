@@ -9,15 +9,15 @@ export const FEATURE_KEYS = [
 ];
 
 export const PROFILES = [
-  { value: 'tenant-admin', label: 'Administrador del tenant' },
-  { value: 'platform-operator', label: 'Operador de plataforma' },
-  { value: 'service-consumer', label: 'Consumidor de servicio' },
+  { value: 'tenant-admin', label: 'Tenant administrator' },
+  { value: 'platform-operator', label: 'Platform operator' },
+  { value: 'service-consumer', label: 'Service consumer' },
   { value: 'auditor', label: 'Auditor' },
-  { value: 'custom', label: 'Personalizado' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 export const ACCESS_LEVELS = [
-  { value: 'source', label: 'source (el que anuncie Morpheus)' },
+  { value: 'source', label: 'source (whatever Morpheus advertises)' },
   { value: 'full', label: 'full' },
   { value: 'read', label: 'read' },
   { value: 'user', label: 'user' },
@@ -25,10 +25,10 @@ export const ACCESS_LEVELS = [
 ];
 
 export const POLICY_TYPES = [
-  { value: 'motd', label: 'Mensaje del día', config: { message: 'Bienvenido al entorno de demostración.' } },
-  { value: 'instance-name', label: 'Nomenclatura de instancias', config: { namingPattern: '${userInitials}-${sequence}' } },
-  { value: 'expiration', label: 'Caducidad', config: { expirationDays: 30 } },
-  { value: 'cypher', label: 'Acceso a Cypher', config: { keyPattern: 'password/24/demo/*' } },
+  { value: 'motd', label: 'Message of the day', config: { message: 'Welcome to the demonstration environment.' } },
+  { value: 'instance-name', label: 'Instance naming', config: { namingPattern: '${userInitials}-${sequence}' } },
+  { value: 'expiration', label: 'Expiration', config: { expirationDays: 30 } },
+  { value: 'cypher', label: 'Cypher access', config: { keyPattern: 'password/24/demo/*' } },
 ];
 
 const ID_PATTERN = /^[a-z][a-z0-9-]{2,40}$/;
@@ -175,81 +175,81 @@ export function validate(state) {
   const f = state.features;
 
   if (!ID_PATTERN.test(state.metadata.id || '')) {
-    add('meta', 'El ID de la demo debe empezar por letra minúscula y tener entre 3 y 41 caracteres (a-z, 0-9, guion).');
+    add('meta', 'The demo ID must start with a lowercase letter and be 3 to 41 characters of a-z, 0-9 and hyphen.');
   }
-  if (!(state.metadata.name || '').trim()) add('meta', 'La organización necesita un nombre.');
-  if (!(state.tenant.name || '').trim()) add('tenant', 'El tenant necesita un nombre.');
+  if (!(state.metadata.name || '').trim()) add('meta', 'The organization needs a name.');
+  if (!(state.tenant.name || '').trim()) add('tenant', 'The tenant needs a name.');
   if (!SUBDOMAIN_PATTERN.test(state.tenant.subdomain || '')) {
-    add('tenant', 'El subdominio del tenant debe empezar por letra minúscula y usar solo a-z, 0-9 y guion.');
+    add('tenant', 'The tenant subdomain must start with a lowercase letter and use only a-z, 0-9 and hyphen.');
   }
 
-  if (state.personas.length === 0) add('personas', 'Hace falta al menos una persona.');
+  if (state.personas.length === 0) add('personas', 'At least one persona is required.');
   const keys = new Set();
   const usernames = new Set();
   for (const persona of state.personas) {
     const node = `persona:${persona.key}`;
     if (!PERSONA_KEY_PATTERN.test(persona.key || '')) {
-      add(node, `Clave de persona inválida: ${persona.key || '(vacía)'}`);
+      add(node, `Invalid persona key: ${persona.key || '(empty)'}`);
     }
-    if (keys.has(persona.key)) add(node, `Clave de persona duplicada: ${persona.key}`);
+    if (keys.has(persona.key)) add(node, `Duplicate persona key: ${persona.key}`);
     keys.add(persona.key);
-    if (!(persona.username || '').trim()) add(node, `La persona ${persona.key} necesita un usuario.`);
-    if (usernames.has(persona.username)) add(node, `Usuario duplicado: ${persona.username}`);
+    if (!(persona.username || '').trim()) add(node, `Persona ${persona.key} needs a username.`);
+    if (usernames.has(persona.username)) add(node, `Duplicate username: ${persona.username}`);
     usernames.add(persona.username);
-    if (!(persona.email || '').trim()) add(node, `La persona ${persona.key} necesita un correo.`);
-    if (!(persona.role || '').trim()) add(node, `La persona ${persona.key} necesita un nombre de rol.`);
-    if (!(persona.profile || '').trim()) add(node, `La persona ${persona.key} necesita un perfil.`);
+    if (!(persona.email || '').trim()) add(node, `Persona ${persona.key} needs an email address.`);
+    if (!(persona.role || '').trim()) add(node, `Persona ${persona.key} needs a role name.`);
+    if (!(persona.profile || '').trim()) add(node, `Persona ${persona.key} needs a profile.`);
     for (const rule of persona.permissions) {
-      if (!(rule.pattern || '').trim()) add(node, `Un permiso de ${persona.key} no tiene patrón.`);
-      if (!(rule.access || '').trim()) add(node, `Un permiso de ${persona.key} no tiene nivel de acceso.`);
+      if (!(rule.pattern || '').trim()) add(node, `A permission of ${persona.key} has no pattern.`);
+      if (!(rule.access || '').trim()) add(node, `A permission of ${persona.key} has no access level.`);
     }
     if (persona.verify && persona.verify.allow && !persona.verify.allow.startsWith('/api/')) {
-      add(node, `La ruta permitida de ${persona.key} debe empezar por /api/.`);
+      add(node, `The allowed path of ${persona.key} must start with /api/.`);
     }
     if (persona.verify && persona.verify.deny && !persona.verify.deny.startsWith('/api/')) {
-      add(node, `La ruta denegada de ${persona.key} debe empezar por /api/.`);
+      add(node, `The denied path of ${persona.key} must start with /api/.`);
     }
   }
   if (f.roles) {
     const admins = state.personas.filter((persona) => persona.profile === 'tenant-admin');
     if (admins.length !== 1) {
-      add('personas', `Con roles activos hace falta exactamente un perfil tenant-admin; hay ${admins.length}. Leroy inicia sesión como esa persona para obtener el token del tenant.`);
+      add('personas', `With roles enabled exactly one tenant-admin profile is required; there are ${admins.length}. Leroy logs in as that persona to obtain the tenant token.`);
     }
   }
   if (state.personas.filter((persona) => persona.runsWorkflow).length > 1) {
-    add('personas', 'Solo una persona puede ejecutar el flujo de trabajo.');
+    add('personas', 'Only one persona can run the workflow.');
   }
 
-  if (f.roles !== f.multitenancy) add('tenant', 'Multitenancy y roles de persona se despliegan juntos.');
-  if (f.policies && !f.groups) add('policies', 'Las políticas necesitan grupos.');
-  if (f.catalog && !f.automation) add('catalog', 'El catálogo necesita automatización.');
+  if (f.roles !== f.multitenancy) add('tenant', 'Multitenancy and persona roles are deployed together.');
+  if (f.policies && !f.groups) add('policies', 'Policies need groups.');
+  if (f.catalog && !f.automation) add('catalog', 'The catalog needs automation.');
 
   if (f.automation) {
     const taskCodes = new Set(state.automation.tasks.map((item) => item.code));
     const inputNames = new Set(state.automation.inputs.map((item) => item.fieldName));
     for (const workflow of state.automation.workflows) {
-      if (!taskCodes.has(workflow.task)) add('task', `El flujo ${workflow.name} referencia una tarea inexistente: ${workflow.task}`);
-      if (!inputNames.has(workflow.input)) add('input', `El flujo ${workflow.name} referencia una entrada inexistente: ${workflow.input}`);
+      if (!taskCodes.has(workflow.task)) add('task', `Workflow ${workflow.name} references a task that does not exist: ${workflow.task}`);
+      if (!inputNames.has(workflow.input)) add('input', `Workflow ${workflow.name} references an input that does not exist: ${workflow.input}`);
     }
   }
   if (f.catalog) {
     const workflowCodes = new Set(state.automation.workflows.map((item) => item.code));
     for (const item of state.automation.catalogItems) {
-      if (!workflowCodes.has(item.workflow)) add('catalog', `El elemento de catálogo ${item.name} referencia un flujo inexistente: ${item.workflow}`);
+      if (!workflowCodes.has(item.workflow)) add('catalog', `Catalog item ${item.name} references a workflow that does not exist: ${item.workflow}`);
     }
   }
 
-  for (const [label, list] of [['entorno', state.environments], ['grupo', state.groups], ['política', state.policies]]) {
+  for (const [label, list] of [['environment', state.environments], ['group', state.groups], ['policy', state.policies]]) {
     const codes = new Set();
     for (const item of list) {
-      if (!(item.code || '').trim()) add('meta', `Un ${label} no tiene código.`);
-      if (codes.has(item.code)) add('meta', `Código de ${label} duplicado: ${item.code}`);
+      if (!(item.code || '').trim()) add('meta', `An entry under ${label} has no code.`);
+      if (codes.has(item.code)) add('meta', `Duplicate ${label} code: ${item.code}`);
       codes.add(item.code);
     }
   }
 
   if (hasSecretKey(buildManifest(state))) {
-    add('meta', 'El manifiesto no puede contener claves password, token ni access_token.');
+    add('meta', 'The manifest must not contain password, token or access_token keys.');
   }
   return problems;
 }
@@ -259,7 +259,7 @@ export function validate(state) {
 export function parseManifest(manifest) {
   const version = manifest.schemaVersion;
   if (version !== 1 && version !== 2) {
-    throw new Error(`Versión de esquema no soportada: ${version}`);
+    throw new Error(`Unsupported schema version: ${version}`);
   }
   const automation = manifest.automation || {};
   return {
