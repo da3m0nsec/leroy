@@ -139,7 +139,8 @@ export MORPHEUS_API_TOKEN="your-administrator-token"
         <li>Bash 4.4 or newer, <code>curl</code> and <code>jq</code>.</li>
         <li>An HPE Morpheus 9 appliance and a Master Tenant administrator token.</li>
         <li>The token is read from <code>MORPHEUS_API_TOKEN</code> and is never passed as an
-          argument, because process arguments are visible to other users.</li>
+          argument, because process arguments are visible to other users. A <code>.env</code>
+          next to the script works too, and is read without sourcing or exporting.</li>
         <li>TLS verification is off by default for appliances with internal certificates.
           Set <code>MORPHEUS_VERIFY_TLS=true</code> when the certificate is trusted.</li>
       </ul>

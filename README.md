@@ -112,6 +112,10 @@ scrolled. Set `NO_COLOR=1` to drop the color styling.
   keys outright.
 - Tokens come from `MORPHEUS_API_TOKEN` or a `0600` config file, never from
   command-line arguments, which other users can read.
+- A `.env` is read from the working directory, so treat it like any other file
+  you would not run blindly: Leroy never executes it, but a stray one could
+  still point `MORPHEUS_URL` somewhere unexpected. It says which file it loaded,
+  and `status` prints the appliance it is talking to.
 - Everything Leroy creates carries an ownership marker. `destroy` verifies it
   before deleting and stops if anything does not match.
 - TLS verification defaults to **off** for appliances with internal
@@ -123,9 +127,24 @@ permissions and holds resource IDs, never passwords.
 
 ## Configuration
 
-Values resolve from built-in defaults, then
-`${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config`, then `--config FILE`, then
-exported `MORPHEUS_*` variables. See
+Put a `.env` next to the script and Leroy picks it up on its own, with no
+sourcing or exporting:
+
+```bash
+cp .env.example .env && chmod 600 .env
+$EDITOR .env
+./leroy.sh status
+```
+
+That file is **parsed, not sourced**: only Leroy's own settings are read, every
+other key is ignored, and nothing in it is ever executed. Because it is read
+from the working directory, Leroy logs which file it loaded. Point
+`LEROY_ENV_FILE` elsewhere to use another name, or set it empty to skip the
+file entirely.
+
+Values resolve from built-in defaults, then `.env`, then
+`${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config` or `--config FILE`, then
+exported `MORPHEUS_*` variables, which always win. See
 [`config/leroy.conf.example`](config/leroy.conf.example). Missing values are
 requested interactively when a terminal is available; automation still fails
 without prompting.

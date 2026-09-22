@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Landing page in front of the builder explaining the tool, how it works, the seven blocks it deploys and the security model, with copyable `curl` and `wget` commands that install the CLI. The builder opens from it and is deep-linkable at `#constructor`.
 - Graphical manifest builder under `web/`, deployed to GitHub Pages: a canvas of draggable boxes wired by the dependencies Leroy applies, with demo scenarios for platform, banking, retail, telco and public sector, persona and permission editing, live validation against the same rules as `leroy.sh`, and manifest import and export.
 - `make web` serves the builder locally and `make web-manifests` prints each scenario's manifest.
+- A project-local `.env` is read on start, with no sourcing or exporting. It is parsed rather than sourced: only Leroy's own settings are read, `export` prefixes, quotes and CRLF endings are tolerated, and a value is never evaluated. `LEROY_ENV_FILE` points it elsewhere or, when empty, skips it.
 
 ### Changed
 

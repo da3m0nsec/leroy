@@ -78,11 +78,45 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Reads KEY=VALUE settings from a project-local environment file. The file is
+# parsed, never sourced: it is picked up from the working directory, so it must
+# not be able to execute anything. Only Leroy's own settings are honored, and
+# everything else in the file is ignored.
+load_env_file() {
+  local file="$1" line key value loaded=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -n "$line" && "$line" != '#'* ]] || continue
+    line="${line#export }"
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    case "$value" in
+      '"'*'"') value="${value:1:${#value}-2}" ;;
+      "'"*"'") value="${value:1:${#value}-2}" ;;
+      *) value="${value%"${value##*[![:space:]]}"}" ;;
+    esac
+    case "$key" in
+      MORPHEUS_URL | MORPHEUS_API_TOKEN | MORPHEUS_VERIFY_TLS | MORPHEUS_CONNECT_TIMEOUT | \
+        MORPHEUS_REQUEST_TIMEOUT | LEROY_OUTPUT | LEROY_LOG_LEVEL | LEROY_STATE_DIR)
+        printf -v "$key" '%s' "$value"
+        loaded=$((loaded + 1))
+        ;;
+    esac
+  done <"$file"
+  ((loaded == 0)) || log_info "loaded $loaded setting(s) from $file"
+}
+
 load_config() {
   local explicit="${1:-}" default="${XDG_CONFIG_HOME:-${HOME}/.config}/leroy/config"
+  local env_file="${LEROY_ENV_FILE-.env}"
   local e_url="$MORPHEUS_URL" e_token="$MORPHEUS_API_TOKEN" e_tls="$MORPHEUS_VERIFY_TLS"
   local e_connect="$MORPHEUS_CONNECT_TIMEOUT" e_request="$MORPHEUS_REQUEST_TIMEOUT"
   local e_output="$LEROY_OUTPUT" e_log="$LEROY_LOG_LEVEL" e_state="$LEROY_STATE_DIR"
+  [[ -z "$env_file" || ! -r "$env_file" ]] || load_env_file "$env_file"
   if [[ -n "$explicit" ]]; then
     [[ -r "$explicit" ]] || die "$EXIT_USAGE" "configuration file is not readable: $explicit" || return
     # shellcheck source=/dev/null

@@ -56,11 +56,11 @@ Within `leroy.sh`, configuration functions run before either adapter, shared hel
 Configuration values are resolved in this order, from lowest to highest priority:
 
 1. built-in non-secret defaults;
-2. `${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config`;
-3. the file selected by `--config`; and
+2. a project-local `.env` in the working directory, or the file named by `LEROY_ENV_FILE`;
+3. `${XDG_CONFIG_HOME:-$HOME/.config}/leroy/config`, or the file selected by `--config`; and
 4. exported `MORPHEUS_*` environment variables.
 
-The bootstrap implementation sources configuration as shell assignments. A configuration file must therefore be owned and controlled by the operator and must never be sourced from an untrusted location. A future release may replace this format with a non-executable parser.
+The two configuration files are sourced as shell assignments, so they must be owned and controlled by the operator and must never be sourced from an untrusted location. The project-local `.env` is different: it is found in whatever directory Leroy runs from, so it is parsed rather than sourced. `load_env_file` reads `KEY=VALUE` lines, accepts only Leroy's own settings, tolerates `export` prefixes, quotes and CRLF endings, and never evaluates a value, so a file containing a command substitution yields that text literally instead of running it. Leroy reports which file it loaded, because a stray `.env` can still redirect `MORPHEUS_URL`.
 
 Access tokens are read from `MORPHEUS_API_TOKEN`. They are deliberately excluded from positional arguments, URLs, debug messages, and process titles. TLS certificate validation defaults to off for demonstration appliances with internal certificates. Set `MORPHEUS_VERIFY_TLS=true` whenever the appliance certificate is trusted.
 
