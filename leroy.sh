@@ -726,14 +726,30 @@ configure_role_permissions() {
   [[ "$(jq 'length' <<<"$rules")" -gt 0 ]] || rules="$(role_permissions "$profile")"
   [[ "$(jq 'length' <<<"$rules")" -gt 0 ]] || return 0
   available="$(api_request GET "/api/roles/${BASE_USER_ROLE_ID}?includeDefaultAccess=true" '' "$MASTER_TOKEN")" || return
+  # Only feature permissions can be granted through update-permission. The same
+  # response also carries instance type, app template, catalog item, persona and
+  # site permissions, which have endpoints of their own. Matching against the
+  # whole document picked those up, and sending one of their codes here is what
+  # Morpheus answers with "Permission not found".
+  local features count
+  features="$(jq -c '[(.featurePermissions // .permissions // .role.featurePermissions // [])[] | select(.code)]' <<<"$available")"
+  count="$(jq 'length' <<<"$features")"
+  ((count > 0)) ||
+    { die "$EXIT_VERIFY" "the base role ${BASE_USER_ROLE_ID} advertised no feature permissions, so Leroy cannot tell which access levels this appliance accepts. The account may not be allowed to read role details."; return; }
   while IFS= read -r rule; do
     pattern="$(jq -r '.pattern' <<<"$rule")"; access="$(jq -r '.access' <<<"$rule")"
-    matches="$(jq -c --arg pattern "$pattern" '[.. | objects | select(.code? and (((.name? // "")+" "+.code) | test($pattern;"i")))] | unique_by(.code)[]' <<<"$available")"
-    [[ -n "$matches" ]] || { die "$EXIT_VERIFY" "no Morpheus permission matched $profile rule: $pattern"; return; }
+    matches="$(jq -c --arg pattern "$pattern" '[.[] | select(((.name // "") + " " + .code) | test($pattern; "i"))] | unique_by(.code)[]' <<<"$features")"
+    if [[ -z "$matches" ]]; then
+      die "$EXIT_VERIFY" "no feature permission on this appliance matches the ${profile} rule \"${pattern}\". The appliance offers ${count}, including: $(jq -r '[.[].name] | sort | .[0:8] | join(", ")' <<<"$features"). Adjust that persona's permissions in the manifest."
+      return
+    fi
     while IFS= read -r permission; do
       code="$(jq -r '.code' <<<"$permission")"
       if [[ "$access" == source ]]; then effective_access="$(jq -r '.access // "full"' <<<"$permission")"; else effective_access="$access"; fi
-      api_request PUT "/api/roles/${role_id}/update-permission" "$(jq -nc --arg code "$code" --arg access "$effective_access" '{permissionCode:$code,access:$access}')" "$MASTER_TOKEN" >/dev/null || return
+      if ! api_request PUT "/api/roles/${role_id}/update-permission" "$(jq -nc --arg code "$code" --arg access "$effective_access" '{permissionCode:$code,access:$access}')" "$MASTER_TOKEN" >/dev/null; then
+        log_error "while granting \"${code}\" with access \"${effective_access}\" to the ${profile} role (ID ${role_id}), matched by the rule \"${pattern}\""
+        return "$EXIT_API"
+      fi
     done <<<"$matches"
   done < <(jq -c '.[]' <<<"$rules")
 }

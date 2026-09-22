@@ -874,3 +874,66 @@ load test_helper
   [[ "$output" == *"policies: deployed true, now false"* ]]
   [[ "$output" != *"environments:"* ]]
 }
+
+@test "only feature permissions are granted through update-permission" {
+  local captured="$BATS_TEST_TMPDIR/payloads.jsonl" role="$BATS_TEST_TMPDIR/role.json"
+  cat >"$role" <<'JSON'
+{
+  "role": {"id": 2, "name": "System Admin"},
+  "featurePermissions": [
+    {"code": "provisioning-instances", "name": "Provisioning: Instances", "access": "full"},
+    {"code": "infrastructure-groups", "name": "Infrastructure: Groups", "access": "yes"}
+  ],
+  "instanceTypePermissions": [{"code": "apache", "name": "Apache Library Instance", "access": "full"}],
+  "catalogItemTypePermissions": [{"code": "infra-catalog", "name": "Infrastructure Catalog Item", "access": "full"}],
+  "personaPermissions": [{"code": "serviceCatalog", "name": "Service Catalog", "access": "full"}],
+  "sites": [{"code": "infra-site", "name": "Infrastructure Site", "access": "full"}]
+}
+JSON
+  run bash -c '
+    source "$1"; BASE_USER_ROLE_ID=2; MASTER_TOKEN=test; captured="$3"
+    api_request() {
+      if [[ "$1" == GET ]]; then cat "$2x"; return; fi
+      printf "%s\n" "$3" >>"'"$captured"'"; printf "%s\n" "{\"success\":true}"
+    }
+    api_request() {
+      if [[ "$1" == GET ]]; then cat "'"$role"'"; return; fi
+      printf "%s\n" "$3" >>"'"$captured"'"; printf "%s\n" "{\"success\":true}"
+    }
+    configure_role_permissions platform-operator 42
+  ' _ "$LEROY_BIN" "$role" "$captured"
+  [ "$status" -eq 0 ]
+  # The instance type, catalog item type, persona and site codes all match the
+  # rules textually, and all of them are rejected by update-permission.
+  jq -se 'all(.[]; .permissionCode | IN("provisioning-instances", "infrastructure-groups"))' "$captured"
+  jq -se 'any(.[]; .permissionCode == "infrastructure-groups" and .access == "yes")' "$captured"
+  run grep -cE 'apache|infra-catalog|serviceCatalog|infra-site' "$captured"
+  [ "$output" = "0" ]
+}
+
+@test "a rule matching no feature permission lists what the appliance offers" {
+  local role="$BATS_TEST_TMPDIR/role.json"
+  export ROLE_FIXTURE="$role"
+  printf '%s\n' '{"featurePermissions":[{"code":"provisioning-instances","name":"Provisioning: Instances","access":"full"}]}' >"$role"
+  run bash -c '
+    source "$1"; BASE_USER_ROLE_ID=2; MASTER_TOKEN=test
+    api_request() { cat "$ROLE_FIXTURE"; }
+    configure_role_permissions service-consumer 42
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 9 ]
+  [[ "$output" == *"no feature permission on this appliance matches the service-consumer rule"* ]]
+  [[ "$output" == *"Provisioning: Instances"* ]]
+}
+
+@test "a rejected permission names the code, the access and the rule" {
+  run bash -c '
+    source "$1"; BASE_USER_ROLE_ID=2; MASTER_TOKEN=test; MORPHEUS_URL=https://m.test
+    api_request() {
+      [[ "$1" == GET ]] && { printf "%s\n" "{\"featurePermissions\":[{\"code\":\"provisioning-instances\",\"name\":\"Provisioning: Instances\",\"access\":\"full\"}]}"; return; }
+      die "$EXIT_API" "Morpheus refused it"
+    }
+    configure_role_permissions platform-operator 77
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 5 ]
+  [[ "$output" == *'while granting "provisioning-instances" with access "full" to the platform-operator role (ID 77)'* ]]
+}

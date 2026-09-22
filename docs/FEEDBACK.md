@@ -112,6 +112,13 @@ Found by reading the code and driving the TUI in a pseudo-terminal, not on an ap
 - **Expected:** Compare against `false` directly.
 - **Status:** Resolved locally; appliance confirmation pending (`AV-064`, `AV-105`).
 
+### LRY-018 — Permission grants included codes that are not feature permissions
+
+- **Observed:** On a real appliance, apply adopted the tenant and three roles and then stopped with `HTTP 400: Permission not found`, exit code 10.
+- **Cause:** `configure_role_permissions` matched its patterns against the entire role document. A Morpheus role response also carries `instanceTypePermissions`, `catalogItemTypePermissions`, `personaPermissions` and `sites`, whose codes look like permissions but belong to other endpoints. The operator rule matched an instance type named "Apache Library Instance" and a site named "Infrastructure Site"; the consumer rule matched the "Service Catalog" persona.
+- **Expected:** Only `featurePermissions` may be granted through `update-permission`.
+- **Status:** Resolved locally; appliance confirmation pending (`AV-101`).
+
 ## Validation requested
 
 On the same appliance build:
