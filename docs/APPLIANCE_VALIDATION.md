@@ -136,7 +136,7 @@ what a persona may do is decided by Morpheus, not by Leroy.
 | ID | Behavior | Why local tests cannot settle it | Expected on an appliance |
 | --- | --- | --- | --- |
 | AV-100 | A schema 2 manifest applies end to end | Only payload construction is tested locally | `demo apply --file` on a builder manifest completes and verifies |
-| AV-101 | Per-persona permission rules from the manifest | Pattern matching runs against the permissions the real base role advertises | Each rule matches at least one permission; a rule that matches none fails with exit code 9 naming it |
+| AV-101 | Per-persona permission rules from the manifest | Pattern matching runs against the permissions the real base role advertises | Each rule matches at least one feature permission and every grant is accepted; a rule that matches none fails with exit code 9 listing what the appliance offers. Confirm the preset's `catalog|service catalog` rule matches a real feature permission, since only instance and persona entries matched it before (LRY-018) |
 | AV-102 | Access levels other than `source` | Morpheus decides which levels a permission accepts (see LRY-004) | `read`, `full` and `user` are accepted, or the run fails with the API message |
 | AV-103 | A persona with a profile Morpheus does not know | Schema 2 allows any profile string; only `tenant-admin` is special to Leroy | The role is created with the base user role and the manifest's permissions |
 | AV-104 | More than three personas | Resource expansion is tested; creation is not | Every persona yields a role, a Cypher key and a user |

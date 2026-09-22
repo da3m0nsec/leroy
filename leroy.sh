@@ -176,6 +176,22 @@ validate_runtime_config() {
 
 urlencode() { jq -nr --arg value "$1" '$value | @uri'; }
 
+# curl exit codes are meaningless to an operator. Say what actually went wrong
+# and, where there is one, what to do about it.
+curl_failure_reason() {
+  case "$1" in
+    5 | 6) printf 'the host name could not be resolved' ;;
+    7) printf 'the connection was refused' ;;
+    28) printf 'it timed out after %ss (MORPHEUS_CONNECT_TIMEOUT=%s, MORPHEUS_REQUEST_TIMEOUT=%s)' \
+      "$MORPHEUS_REQUEST_TIMEOUT" "$MORPHEUS_CONNECT_TIMEOUT" "$MORPHEUS_REQUEST_TIMEOUT" ;;
+    35 | 60 | 77 | 83) printf 'the TLS handshake failed; an internal certificate needs MORPHEUS_VERIFY_TLS=false' ;;
+    52) printf 'the appliance closed the connection without replying' ;;
+    56) printf 'the connection was reset' ;;
+    22) printf 'the server returned an error before any body' ;;
+    *) printf 'curl exited %s' "$1" ;;
+  esac
+}
+
 api_request() {
   local method="$1" path="$2" body="${3:-}" token="${4:-$MASTER_TOKEN}"
   local status curl_rc response combined auth_file=""
@@ -197,17 +213,31 @@ api_request() {
   set -e
   [[ -z "$auth_file" ]] || rm -f "$auth_file"; ACTIVE_AUTH_FILE=""
   status="${combined##*$'\n'}"; response="${combined%$'\n'*}"
-  ((curl_rc == 0)) || { die "$EXIT_API" "request transport failed (curl exit $curl_rc)"; return; }
+  local request="$method $path"
+  ((curl_rc == 0)) || { die "$EXIT_API" "cannot reach ${MORPHEUS_URL} for ${request}: $(curl_failure_reason "$curl_rc")"; return; }
+  local message
+  message="$(jq -r '[.. | objects | (.msg?, .message?, .error?, .errors?)] | map(select(type == "string")) | first // empty' <<<"$response" 2>/dev/null || true)"
   case "$status" in
     2??) ;;
-    401 | 403) die "$EXIT_AUTH" "authentication or authorization failed: HTTP $status"; return ;;
-    404) die "$EXIT_NOT_FOUND" 'resource not found: HTTP 404'; return ;;
-    *)
-      local message; message="$(jq -r '.msg // .message // .error // empty' <<<"$response" 2>/dev/null || true)"
-      die "$EXIT_API" "Morpheus API failed: HTTP $status${message:+: $message}"; return
+    401)
+      die "$EXIT_AUTH" "Morpheus rejected the token on ${request} (HTTP 401). Check MORPHEUS_API_TOKEN; a Morpheus token expires and has to be reissued.${message:+ Morpheus said: $message}"
+      return
       ;;
+    403)
+      die "$EXIT_AUTH" "the account is not allowed to ${request} (HTTP 403). The token authenticates but lacks the permission; Leroy needs a Master Tenant administrator.${message:+ Morpheus said: $message}"
+      return
+      ;;
+    404) die "$EXIT_NOT_FOUND" "Morpheus has no ${request} (HTTP 404). Either the resource is gone or this appliance does not expose that endpoint."; return ;;
+    400 | 422)
+      die "$EXIT_API" "Morpheus refused ${request} as invalid (HTTP $status)${message:+: $message}. This usually means the payload does not match what this Morpheus build expects."
+      return
+      ;;
+    429) die "$EXIT_API" "Morpheus is rate limiting ${request} (HTTP 429)${message:+: $message}. Retry in a moment."; return ;;
+    5??) die "$EXIT_API" "the appliance failed on ${request} (HTTP $status)${message:+: $message}. This is a Morpheus-side error, not a request Leroy can fix."; return ;;
+    *) die "$EXIT_API" "unexpected HTTP $status from ${request}${message:+: $message}"; return ;;
   esac
-  jq empty <<<"$response" >/dev/null 2>&1 || { die "$EXIT_RESPONSE" 'Morpheus returned invalid JSON'; return; }
+  jq empty <<<"$response" >/dev/null 2>&1 ||
+    { die "$EXIT_RESPONSE" "${request} returned HTTP $status but the body is not JSON. An appliance behind a portal or proxy often answers with HTML."; return; }
   printf '%s\n' "$response"
 }
 
@@ -246,8 +276,9 @@ oauth_login() {
   [[ "$MORPHEUS_VERIFY_TLS" != false ]] || args+=(--insecure)
   set +e; combined="$(printf '%s' "$form" | curl "${args[@]}" "${MORPHEUS_URL}/oauth/token")"; curl_rc=$?; set -e
   status="${combined##*$'\n'}"; response="${combined%$'\n'*}"
-  ((curl_rc == 0)) || return "$EXIT_API"
-  [[ "$status" == 2?? ]] || { die "$EXIT_AUTH" "temporary persona login failed: HTTP $status"; return; }
+  ((curl_rc == 0)) || { die "$EXIT_API" "cannot reach ${MORPHEUS_URL} to log in as ${username}: $(curl_failure_reason "$curl_rc")"; return; }
+  [[ "$status" == 2?? ]] ||
+    { die "$EXIT_AUTH" "Morpheus refused the login for ${username} (HTTP $status). The generated password may no longer match the user, or the tenant subdomain is wrong."; return; }
   jq -e '.access_token and (.access_token | length > 0)' <<<"$response" >/dev/null || return "$EXIT_RESPONSE"
   printf '%s\n' "$response"
 }
@@ -337,79 +368,110 @@ deployment_scope() {
   if feature_enabled multitenancy; then printf 'tenant'; else printf 'master'; fi
 }
 
-# Feature-flag rules are identical in both schema versions. $features is a jq
-# variable bound by the caller, not a shell expansion.
-# shellcheck disable=SC2016
-FEATURE_RULES_JQ='
-  ([ $features[] ] | all(type == "boolean")) and
-  ($features.roles == $features.multitenancy) and
-  ($features.policies == false or $features.groups == true) and
-  ($features.catalog == false or $features.automation == true)
-'
-IDENTITY_RULES_JQ='
-  (.metadata.id | test("^[a-z][a-z0-9-]{2,40}$")) and
-  (.metadata.name | length > 0) and .metadata.language == "en" and
-  (.tenant.name | length > 0) and (.tenant.subdomain | test("^[a-z][a-z0-9-]+$")) and
-  (.environments | type == "array") and (.groups | type == "array") and
-  (.policies | type == "array") and (.automation | type == "object")
-'
-readonly FEATURE_RULES_JQ IDENTITY_RULES_JQ
+# Checks shared by both schema versions. Each branch yields the reason a
+# manifest was rejected, so the operator does not have to guess which of a
+# dozen rules failed.
+read -r -d '' COMMON_CHECKS_JQ <<'JQ' || true
+($defaults * (.features // {})) as $f |
+[
+  (if ((.metadata.id? // "") | type == "string" and test("^[a-z][a-z0-9-]{2,40}$")) then empty
+   else "metadata.id must be 3 to 41 characters of a-z, 0-9 and hyphen starting with a letter, found \"\(.metadata.id? // "")\"" end),
+  (if ((.metadata.name? // "") | length) > 0 then empty else "metadata.name is required" end),
+  (if .metadata.language? == "en" then empty else "metadata.language must be \"en\", found \"\(.metadata.language? // "")\"" end),
+  (if ((.tenant.name? // "") | length) > 0 then empty else "tenant.name is required" end),
+  (if ((.tenant.subdomain? // "") | type == "string" and test("^[a-z][a-z0-9-]+$")) then empty
+   else "tenant.subdomain must use only a-z, 0-9 and hyphen starting with a letter, found \"\(.tenant.subdomain? // "")\"" end),
+  (["environments", "groups", "policies"][] as $k |
+    if ((.[$k]? | type) == "array") then empty else "\($k) must be an array, found \(.[$k]? | type)" end),
+  (if ((.automation? | type) == "object") then empty else "automation must be an object, found \(.automation? | type)" end),
+  ($f | to_entries[] | select((.value | type) != "boolean") | "features.\(.key) must be true or false, found \(.value | tojson)"),
+  (if $f.roles == $f.multitenancy then empty
+   else "features.roles and features.multitenancy must match because persona roles live in the tenant, found roles=\($f.roles) multitenancy=\($f.multitenancy)" end),
+  (if $f.policies == false or $f.groups == true then empty
+   else "features.policies needs features.groups because policies are scoped to groups" end),
+  (if $f.catalog == false or $f.automation == true then empty
+   else "features.catalog needs features.automation because the catalog item is backed by the workflow" end)
+]
+JQ
 
-# Schema 1 fixes the persona set: three personas with known keys and profiles,
-# whose permissions and verification paths live in this script.
-validate_manifest_v1() {
-  jq -e --argjson defaults "$(feature_defaults)" "
-    (\$defaults * (.features // {})) as \$features |
-    .schemaVersion == 1 and
-    ${IDENTITY_RULES_JQ} and
-    (.personas | length == 3) and
-    ([.personas[].key] | sort == [\"admin\",\"consumer\",\"operator\"]) and
-    ([.personas[].profile] | sort == [\"platform-operator\",\"service-consumer\",\"tenant-admin\"]) and
-    ([.personas[].username] | unique | length == 3) and
-    ${FEATURE_RULES_JQ}
-  " "$1" >/dev/null
-}
+read -r -d '' V1_CHECKS_JQ <<'JQ' || true
+[
+  (if .schemaVersion == 1 then empty else "schemaVersion must be 1" end),
+  (if ((.personas? | type) == "array") then
+     (if (.personas | length) == 3 then empty
+      else "schema 1 requires exactly 3 personas, found \(.personas | length). Schema 2 allows any number." end),
+     (if ([.personas[].key] | sort) == ["admin", "consumer", "operator"] then empty
+      else "schema 1 persona keys must be admin, operator and consumer, found \([.personas[].key] | join(", "))" end),
+     (if ([.personas[].profile] | sort) == ["platform-operator", "service-consumer", "tenant-admin"] then empty
+      else "schema 1 persona profiles must be tenant-admin, platform-operator and service-consumer, found \([.personas[].profile] | join(", "))" end),
+     (if ([.personas[].username] | unique | length) == (.personas | length) then empty
+      else "persona usernames must be unique, found \([.personas[].username] | join(", "))" end)
+   else "personas must be an array" end)
+]
+JQ
 
-# Schema 2 lets the manifest carry its own personas, their Morpheus permission
-# rules, and the access each one must and must not have. A tenant administrator
-# is still required whenever persona roles are deployed, because the tenant
-# token is obtained by logging in as that persona.
-validate_manifest_v2() {
-  jq -e --argjson defaults "$(feature_defaults)" "
-    (\$defaults * (.features // {})) as \$features |
-    .schemaVersion == 2 and
-    ${IDENTITY_RULES_JQ} and
-    (.personas | type == \"array\") and (.personas | length >= 1) and
-    all(.personas[];
-      (.key | type) == \"string\" and (.key | test(\"^[a-z][a-z0-9-]{0,30}\$\")) and
-      (.role | type) == \"string\" and (.role | length) > 0 and
-      (.username | type) == \"string\" and (.username | length) > 0 and
-      (.email | type) == \"string\" and (.email | length) > 0 and
-      (.profile | type) == \"string\" and (.profile | length) > 0) and
-    ([.personas[].key] | unique | length) == (.personas | length) and
-    ([.personas[].username] | unique | length) == (.personas | length) and
-    (\$features.roles == false or ([.personas[] | select(.profile == \"tenant-admin\")] | length) == 1) and
-    ([.personas[] | select(.runsWorkflow == true)] | length) <= 1 and
-    all(.personas[] | (.permissions // [])[];
-      (.pattern | type) == \"string\" and (.pattern | length) > 0 and
-      (.access | type) == \"string\" and (.access | length) > 0) and
-    all(.personas[] | select(has(\"verify\")) | .verify;
-      (.allow | type) == \"string\" and (.allow | startswith(\"/api/\")) and
-      ((.deny // \"\") | type) == \"string\") and
-    ${FEATURE_RULES_JQ}
-  " "$1" >/dev/null
+read -r -d '' V2_CHECKS_JQ <<'JQ' || true
+($defaults * (.features // {})) as $f |
+[
+  (if .schemaVersion == 2 then empty else "schemaVersion must be 2" end),
+  (if ((.personas? | type) == "array") then
+     (if (.personas | length) >= 1 then empty else "at least one persona is required" end),
+     (.personas[] |
+       (if ((.key // "") | type == "string" and test("^[a-z][a-z0-9-]{0,30}$")) then empty
+        else "persona key must be a-z, 0-9 and hyphen starting with a letter, found \"\(.key // "")\"" end),
+       (["role", "username", "email", "profile"][] as $k |
+         if ((.[$k]? | type) == "string" and ((.[$k] | length) > 0)) then empty
+         else "persona \"\(.key // "?")\" is missing \($k)" end),
+       ((.permissions // [])[] |
+         (if ((.pattern? | type) == "string" and ((.pattern | length) > 0)) then empty
+          else "a permission has no pattern" end),
+         (if ((.access? | type) == "string" and ((.access | length) > 0)) then empty
+          else "a permission has no access level" end)),
+       (select(has("verify")) | .verify |
+         if ((.allow? | type) == "string" and (.allow | startswith("/api/"))) then empty
+         else "verify.allow must be a path starting with /api/, found \"\(.allow? // "")\"" end)),
+     (if ([.personas[].key] | unique | length) == (.personas | length) then empty
+      else "persona keys must be unique, found \([.personas[].key] | join(", "))" end),
+     (if ([.personas[].username] | unique | length) == (.personas | length) then empty
+      else "persona usernames must be unique, found \([.personas[].username] | join(", "))" end),
+     (if $f.roles == false or ([.personas[] | select(.profile == "tenant-admin")] | length) == 1 then empty
+      else "exactly one persona must have profile tenant-admin while roles are enabled, found \([.personas[] | select(.profile == "tenant-admin")] | length). Leroy logs in as that persona to get the tenant token." end),
+     (if ([.personas[] | select(.runsWorkflow == true)] | length) <= 1 then empty
+      else "at most one persona may set runsWorkflow, found \([.personas[] | select(.runsWorkflow == true) | .key] | join(", "))" end)
+   else "personas must be an array" end)
+]
+JQ
+readonly COMMON_CHECKS_JQ V1_CHECKS_JQ V2_CHECKS_JQ
+
+# Lists every reason a manifest would be rejected, one per line.
+manifest_problems() {
+  local file="$1" version defaults
+  defaults="$(feature_defaults)"
+  if ! jq empty "$file" 2>/dev/null; then
+    printf 'the file is not valid JSON\n'
+    return 0
+  fi
+  version="$(jq -r '.schemaVersion // "none"' "$file")"
+  case "$version" in
+    1) jq -r --argjson defaults "$defaults" "($V1_CHECKS_JQ) + ($COMMON_CHECKS_JQ) | .[]" "$file" ;;
+    2) jq -r --argjson defaults "$defaults" "($V2_CHECKS_JQ) + ($COMMON_CHECKS_JQ) | .[]" "$file" ;;
+    *) printf 'schemaVersion must be 1 or 2, found %s\n' "$version" ;;
+  esac
 }
 
 validate_manifest() {
-  local file="$1" version
-  version="$(jq -r '.schemaVersion // empty' "$file" 2>/dev/null || true)"
-  case "$version" in
-    1) validate_manifest_v1 "$file" || { die "$EXIT_USAGE" 'manifest is invalid for schema version 1'; return; } ;;
-    2) validate_manifest_v2 "$file" || { die "$EXIT_USAGE" 'manifest is invalid for schema version 2'; return; } ;;
-    *) die "$EXIT_USAGE" 'manifest is invalid or uses an unsupported schema'; return ;;
-  esac
-  if jq -e '[.. | objects | keys[]] | any(. == "password" or . == "token" or . == "access_token")' "$file" >/dev/null; then
-    die "$EXIT_USAGE" 'manifest must not contain passwords or tokens'; return
+  local file="$1" problems count secrets
+  problems="$(manifest_problems "$file")"
+  if [[ -n "$problems" ]]; then
+    count="$(grep -c '' <<<"$problems")"
+    while IFS= read -r line; do [[ -z "$line" ]] || log_error "manifest: $line"; done <<<"$problems"
+    die "$EXIT_USAGE" "${file} was rejected: ${count} problem(s) listed above"
+    return
+  fi
+  secrets="$(jq -r '[paths(scalars) as $p | select($p[-1] | tostring | . == "password" or . == "token" or . == "access_token") | $p | join(".")] | join(", ")' "$file" 2>/dev/null || true)"
+  if [[ -n "$secrets" ]]; then
+    die "$EXIT_USAGE" "${file} contains credential fields that must never be stored in a manifest: ${secrets}. Leroy generates persona passwords with Cypher at apply time."
+    return
   fi
 }
 
@@ -465,7 +527,11 @@ state_init() {
 }
 
 state_assert_appliance() {
-  [[ ! -f "$STATE_FILE" ]] || [[ "$(jq -r '.applianceUrl' "$STATE_FILE")" == "$MORPHEUS_URL" ]] || { die "$EXIT_CONFLICT" 'state belongs to a different Morpheus appliance'; return; }
+  local recorded
+  [[ -f "$STATE_FILE" ]] || return 0
+  recorded="$(jq -r '.applianceUrl' "$STATE_FILE")"
+  [[ "$recorded" != "$MORPHEUS_URL" ]] || return 0
+  die "$EXIT_CONFLICT" "the saved deployment ${CURRENT_DEMO_ID} was built on ${recorded}, but Leroy is pointed at ${MORPHEUS_URL}. Its recorded IDs mean nothing on this appliance. Point Leroy back at ${recorded}, or use a different metadata.id here."
 }
 
 state_assert_features() {
@@ -474,7 +540,13 @@ state_assert_features() {
   defaults="$(feature_defaults)"
   wanted="$(manifest_features "$CURRENT_MANIFEST" | jq -Sc .)"
   saved="$(jq -Sc --argjson defaults "$defaults" '$defaults * (.manifest.features // {})' "$STATE_FILE")"
-  [[ "$wanted" == "$saved" ]] || { die "$EXIT_CONFLICT" 'deployment component selection differs from existing state; use recreate to apply the new selection'; return; }
+  [[ "$wanted" != "$saved" ]] || return 0
+  local changes
+  changes="$(jq -rn --argjson wanted "$wanted" --argjson saved "$saved" '
+    [$wanted | to_entries[] | select(.value != $saved[.key]) |
+      "\(.key): deployed \($saved[.key]), now \(.value)"] | join("; ")')"
+  die "$EXIT_CONFLICT" "the component selection differs from the saved deployment (${changes}). Leroy will not silently leave deselected resources behind: recreate the demo to apply the new selection, or restore the deployed selection."
+  return
 }
 
 state_resource() { [[ -f "$STATE_FILE" ]] && jq -c --arg key "$1" '.resources[]? | select(.key==$key)' "$STATE_FILE" | head -n 1; }
@@ -495,15 +567,24 @@ preflight() {
   local whoami roles version capability
   local -a capabilities=()
   whoami="$(api_request GET '/api/whoami' '' "$MASTER_TOKEN")" || return
-  jq -e '.isMasterAccount == true' <<<"$whoami" >/dev/null || { die "$EXIT_AUTH" 'a Master Tenant administrator token is required'; return; }
+  if ! jq -e '.isMasterAccount == true' <<<"$whoami" >/dev/null; then
+    die "$EXIT_AUTH" "the token authenticates as $(jq -r '.user.username // "an unknown user"' <<<"$whoami") in tenant $(jq -r '.user.account.name // .account.name // "unknown"' <<<"$whoami"), which is not the Master Tenant. Leroy creates tenants and roles, so it needs a Master Tenant administrator token."
+    return
+  fi
   version="$(jq -r '[.. | objects | (.buildVersion?,.applianceVersion?,.version?)] | map(select(type=="string" and test("^9([. -]|$)"))) | first // empty' <<<"$whoami")"
-  [[ -n "$version" ]] || { die "$EXIT_VERIFY" 'Morpheus major version 9 is required'; return; }
+  if [[ -z "$version" ]]; then
+    die "$EXIT_VERIFY" "Leroy targets Morpheus 9 and this appliance reports $(jq -r '[.. | objects | (.buildVersion?, .applianceVersion?, .version?)] | map(select(type == "string")) | first // "no recognizable version"' <<<"$whoami"). The payloads Leroy sends are written for Morpheus 9 and are not expected to work elsewhere."
+    return
+  fi
   APPLIANCE_BUILD="$version"
   if feature_enabled roles; then
     roles="$(api_collection '/api/roles?includeDefaultAccess=true' roles "$MASTER_TOKEN")" || return
     BASE_ACCOUNT_ROLE_ID="$(jq -r '[.. | objects | select((.roleType? == "account") and (.name? | test("Tenant Admin|Account Admin";"i")))][0].id // empty' <<<"$roles")"
     BASE_USER_ROLE_ID="$(jq -r '[.. | objects | select((.roleType? == "user") and (.name? | test("Admin";"i")))][0].id // empty' <<<"$roles")"
-    [[ -n "$BASE_ACCOUNT_ROLE_ID" && -n "$BASE_USER_ROLE_ID" ]] || { die "$EXIT_VERIFY" 'required built-in Morpheus 9 base roles were not found'; return; }
+    if [[ -z "$BASE_ACCOUNT_ROLE_ID" || -z "$BASE_USER_ROLE_ID" ]]; then
+      die "$EXIT_VERIFY" "the built-in base roles Leroy copies permissions from were not found among $(jq -r '[.. | objects | select(.roleType?)] | length' <<<"$roles") roles: it needs an account role named like \"Tenant Admin\" and a user role named like \"Admin\". Either they were renamed on this appliance, or the token cannot list them."
+      return
+    fi
     capabilities+=(accounts cypher)
   fi
   feature_enabled environments && capabilities+=(environments)
@@ -512,7 +593,8 @@ preflight() {
   feature_enabled automation && capabilities+=(tasks task-sets library/option-types)
   feature_enabled catalog && capabilities+=(catalog-item-types)
   for capability in "${capabilities[@]}"; do
-    api_request GET "/api/${capability}?max=1" '' "$MASTER_TOKEN" >/dev/null || { die "$EXIT_VERIFY" "required API capability is unavailable: $capability"; return; }
+    api_request GET "/api/${capability}?max=1" '' "$MASTER_TOKEN" >/dev/null ||
+      { die "$EXIT_VERIFY" "the selected components need /api/${capability}, which this appliance did not serve. Either the account lacks permission for it, or this Morpheus build does not expose it. Deselect the component that needs it, or use an account that can reach it."; return; }
   done
   export BASE_ACCOUNT_ROLE_ID BASE_USER_ROLE_ID
 }
@@ -644,14 +726,30 @@ configure_role_permissions() {
   [[ "$(jq 'length' <<<"$rules")" -gt 0 ]] || rules="$(role_permissions "$profile")"
   [[ "$(jq 'length' <<<"$rules")" -gt 0 ]] || return 0
   available="$(api_request GET "/api/roles/${BASE_USER_ROLE_ID}?includeDefaultAccess=true" '' "$MASTER_TOKEN")" || return
+  # Only feature permissions can be granted through update-permission. The same
+  # response also carries instance type, app template, catalog item, persona and
+  # site permissions, which have endpoints of their own. Matching against the
+  # whole document picked those up, and sending one of their codes here is what
+  # Morpheus answers with "Permission not found".
+  local features count
+  features="$(jq -c '[(.featurePermissions // .permissions // .role.featurePermissions // [])[] | select(.code)]' <<<"$available")"
+  count="$(jq 'length' <<<"$features")"
+  ((count > 0)) ||
+    { die "$EXIT_VERIFY" "the base role ${BASE_USER_ROLE_ID} advertised no feature permissions, so Leroy cannot tell which access levels this appliance accepts. The account may not be allowed to read role details."; return; }
   while IFS= read -r rule; do
     pattern="$(jq -r '.pattern' <<<"$rule")"; access="$(jq -r '.access' <<<"$rule")"
-    matches="$(jq -c --arg pattern "$pattern" '[.. | objects | select(.code? and (((.name? // "")+" "+.code) | test($pattern;"i")))] | unique_by(.code)[]' <<<"$available")"
-    [[ -n "$matches" ]] || { die "$EXIT_VERIFY" "no Morpheus permission matched $profile rule: $pattern"; return; }
+    matches="$(jq -c --arg pattern "$pattern" '[.[] | select(((.name // "") + " " + .code) | test($pattern; "i"))] | unique_by(.code)[]' <<<"$features")"
+    if [[ -z "$matches" ]]; then
+      die "$EXIT_VERIFY" "no feature permission on this appliance matches the ${profile} rule \"${pattern}\". The appliance offers ${count}, including: $(jq -r '[.[].name] | sort | .[0:8] | join(", ")' <<<"$features"). Adjust that persona's permissions in the manifest."
+      return
+    fi
     while IFS= read -r permission; do
       code="$(jq -r '.code' <<<"$permission")"
       if [[ "$access" == source ]]; then effective_access="$(jq -r '.access // "full"' <<<"$permission")"; else effective_access="$access"; fi
-      api_request PUT "/api/roles/${role_id}/update-permission" "$(jq -nc --arg code "$code" --arg access "$effective_access" '{permissionCode:$code,access:$access}')" "$MASTER_TOKEN" >/dev/null || return
+      if ! api_request PUT "/api/roles/${role_id}/update-permission" "$(jq -nc --arg code "$code" --arg access "$effective_access" '{permissionCode:$code,access:$access}')" "$MASTER_TOKEN" >/dev/null; then
+        log_error "while granting \"${code}\" with access \"${effective_access}\" to the ${profile} role (ID ${role_id}), matched by the rule \"${pattern}\""
+        return "$EXIT_API"
+      fi
     done <<<"$matches"
   done < <(jq -c '.[]' <<<"$rules")
 }
@@ -678,7 +776,8 @@ resolve_policy_type() {
   esac
   response="$(api_collection '/api/policy-types' '' "$(resource_token "$(deployment_scope)")")" || return
   match="$(jq -c --arg pattern "$pattern" '[.. | objects | select(.id? and (((.name? // "")+" "+(.code? // "")) | test($pattern;"i")))][0] // empty' <<<"$response")"
-  [[ -n "$match" ]] || { die "$EXIT_VERIFY" "required Morpheus policy type is unavailable: $semantic"; return; }
+  [[ -n "$match" ]] ||
+    { die "$EXIT_VERIFY" "no policy type on this appliance matches ${semantic} (searched /api/policy-types for ${pattern}). Policy type names differ between Morpheus builds; deselect policies or adjust the manifest."; return; }
   jq -c '{id,code,name}' <<<"$match"
 }
 
@@ -752,7 +851,8 @@ ensure_tenant_token() {
   local cypher_path password username subdomain login tokens admin_key
   admin_key="$(tenant_admin_key)"
   cypher_path="$(resource_id "cypher:${admin_key}")"; TENANT_ADMIN_USER_ID="$(resource_id "user:${admin_key}")"
-  [[ -n "$cypher_path" && -n "$TENANT_ADMIN_USER_ID" ]] || { die "$EXIT_PARTIAL" 'tenant administrator is not ready; rerun apply'; return; }
+  [[ -n "$cypher_path" && -n "$TENANT_ADMIN_USER_ID" ]] ||
+    { die "$EXIT_PARTIAL" "the tenant administrator persona \"${admin_key}\" has not been created yet, so Leroy cannot get a tenant token to create tenant-scoped resources. Run apply again; it resumes from what is already recorded."; return; }
   password="$(api_request GET "/api/cypher/${cypher_path}" '' "$MASTER_TOKEN" | jq -r '.data // .cypher.data // empty')"
   username="$(jq -r --arg key "$admin_key" '.personas[] | select(.key == $key) | .username' "$CURRENT_MANIFEST")"
   subdomain="$(jq -r '.tenant.subdomain' "$CURRENT_MANIFEST")"
@@ -817,13 +917,18 @@ demo_plan() {
   state_assert_appliance || return
   state_assert_features || return
   results="$(mktemp "${TMPDIR:-/tmp}/leroy-plan.XXXXXX")" || return "$EXIT_API"
+  local clashing=""
   while IFS= read -r spec; do
     action="$(desired_action "$spec")"
     jq -nc --arg action "$action" --arg type "$(jq -r '.type' <<<"$spec")" --arg name "$(jq -r '.name' <<<"$spec")" --arg key "$(jq -r '.key' <<<"$spec")" '{action:$action,type:$type,name:$name,key:$key}' >>"$results"
-    [[ "$action" != conflict ]] || conflicts=$((conflicts + 1))
+    if [[ "$action" == conflict ]]; then
+      conflicts=$((conflicts + 1))
+      clashing="${clashing:+$clashing, }$(jq -r '.type + " " + .name' <<<"$spec")"
+    fi
   done < <(resource_stream)
   emit_plan "$results"; rm -f "$results"
-  ((conflicts == 0)) || return "$EXIT_CONFLICT"
+  ((conflicts == 0)) ||
+    { die "$EXIT_CONFLICT" "${conflicts} resource(s) already exist on ${MORPHEUS_URL} without this demo's marker: ${clashing}. Nothing was changed. Rename or remove them, or choose a different metadata.id."; return; }
 }
 
 apply_one() {
@@ -841,7 +946,13 @@ apply_one() {
       fi
       log_info "unchanged $type: $name"; return 0
       ;;
-    conflict) die "$EXIT_CONFLICT" "resource conflicts with Leroy ownership: $type $name"; return ;;
+    conflict)
+      local clash clash_id
+      clash="$(find_remote "$spec" 2>/dev/null || true)"
+      clash_id="$(jq -r '.id // "unknown"' <<<"${clash:-{\}}" 2>/dev/null || printf 'unknown')"
+      die "$EXIT_CONFLICT" "a ${type} named \"${name}\" already exists on ${MORPHEUS_URL} (ID ${clash_id}) and does not carry this demo's marker \"${CURRENT_MARKER}\". Leroy will not touch it. Rename or remove it, pick a different metadata.id, or destroy the demo that owns it."
+      return
+      ;;
   esac
   if [[ "$type" == cypher ]]; then
     path="$(jq -r '.spec.path' <<<"$spec")"

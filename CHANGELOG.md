@@ -28,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Errors say what failed, on what, and what to do about it. Manifest validation lists every broken rule with the offending value instead of one bare "invalid". Transport failures name the cause, such as an unresolved host or a TLS handshake, rather than a curl exit code. HTTP failures name the method, the path, the status and what Morpheus replied. A conflict names the resource, its ID on the appliance and the marker it lacks. Component drift names the components that changed, and a state and appliance mismatch names both URLs. Preflight says which identity the token has, which version the appliance reported, and which endpoint was unreachable.
 - A TUI action that ends in exit code 8 now says which of the three situations it covers instead of only printing the number.
 - TUI actions are grouped by what an operator is doing rather than by internal category: connection, plan, build, lifecycle and manifest, with verification folded into lifecycle.
 - Missing URL and token values are requested interactively instead of immediately failing.
@@ -45,6 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Choosing a manifest file in the TUI did nothing: the prompt wrote its whole screen to standard output, which the caller captured, so nothing was drawn and the answer arrived wrapped in escape codes. It now answers through a variable, and accepts a leading tilde.
 - A resource Leroy created but that is missing from local state is adopted instead of failing the whole plan with exit code 8. Adoption requires this demo's ownership marker, confirmed against the full object when a list response omits the description, so a resource that merely shares a name still conflicts.
+- Role permissions were matched against the whole role document, which also carries instance type, app template, catalog item, persona and site permissions. Those have endpoints of their own, so granting one of their codes through `update-permission` made Morpheus answer `HTTP 400: Permission not found` and stopped the build. Only feature permissions are considered now, and a rule that matches none of them says which the appliance offers instead of sending a code that cannot work.
 - Exact Cypher key discovery no longer produces false conflicts from partial search matches.
 - Existing Leroy-owned generated-password keys are adopted during resumable plans and applies.
 - The TUI describes and acts on the manifest it has loaded rather than assuming the built-in preset and the demo ID `leroy-demo`.
