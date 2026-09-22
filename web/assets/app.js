@@ -194,7 +194,7 @@ function personaInspector(panel, key) {
   }
 
   panel.append(sectionTitle('Verification'));
-  panel.append(hint('Paths leroy demo verify --deep checks while logged in as this persona.'));
+  panel.append(hint('Paths ./leroy.sh demo verify --deep checks while logged in as this persona.'));
   panel.append(textField('Must be able to reach', persona.verify.allow, (value) => { persona.verify.allow = value; }, { mono: true, placeholder: '/api/whoami' }));
   panel.append(textField('Must not be able to reach', persona.verify.deny, (value) => { persona.verify.deny = value; }, { mono: true, placeholder: '/api/tasks?max=1' }));
   return panel;
@@ -398,7 +398,7 @@ function renderPreview() {
   const manifest = buildManifest(state);
   const json = JSON.stringify(manifest, null, 2);
   el('preview').innerHTML = highlight(json);
-  el('command').textContent = `leroy demo plan --file ${state.metadata.id}.json`;
+  el('command').textContent = `./leroy.sh demo plan --file ${state.metadata.id}.json`;
   return json;
 }
 

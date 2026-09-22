@@ -16,6 +16,8 @@
   --infra: #38bdf8;
   --automation: #34d399;
   --catalog: #f0abfc;
+  --selected: #fb923c;
+  --selected-soft: rgba(251, 146, 60, 0.22);
   --radius: 12px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -39,6 +41,8 @@
     --infra: #0e7db3;
     --automation: #0f8a5f;
     --catalog: #a4319f;
+    --selected: #c2410c;
+    --selected-soft: rgba(194, 65, 12, 0.18);
     --shadow: 0 8px 24px rgba(20, 30, 60, 0.12);
   }
 }
@@ -327,7 +331,13 @@ button:focus-visible, .node:focus-visible {
   transition: border-color .15s ease, box-shadow .15s ease, opacity .15s ease;
 }
 .node.is-dragging { cursor: grabbing; box-shadow: 0 18px 40px rgba(0,0,0,.45); z-index: 5; }
-.node.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
+/* Selection must not borrow a category color. Setting border-color here also
+   overwrote the top border that says which block this is, so every selected box
+   turned into the tenant cyan. A ring in a hue no category uses, and no border
+   change at all, keeps the category legible while selected. */
+.node.is-selected {
+  box-shadow: 0 0 0 2px var(--selected), 0 0 0 6px var(--selected-soft), var(--shadow);
+}
 .node.is-off { opacity: .45; }
 .node--rbac { border-top-color: var(--accent); }
 .node--persona { border-top-color: var(--persona); }
