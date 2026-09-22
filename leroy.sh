@@ -1975,21 +1975,81 @@ tui_requires_state() {
   return 1
 }
 
+# Points Leroy at an appliance without leaving the dashboard. The answers apply
+# to this session only: a .env beside the script, or the configuration file, is
+# what makes them persist. The token is read hidden and never displayed back.
+tui_configure_connection() {
+  local url token
+  tui_action_header 'Configure connection'
+  printf 'Appliance:  %s\n' "${MORPHEUS_URL:-not set}"
+  if [[ -n "$MORPHEUS_API_TOKEN" ]]; then printf 'Token:      set\n'; else printf 'Token:      not set\n'; fi
+  printf 'TLS verify: %s\n\n' "$MORPHEUS_VERIFY_TLS"
+  printf '%sThese answers apply to this session only. Put them in a .env next to the\nscript to keep them between runs. Leave an answer empty to keep it as it is.%s\n\n' "$TUI_DIM" "$TUI_RESET"
+  printf '\033[?25h'
+  printf 'Appliance URL: '
+  IFS= read -r url || url=''
+  if [[ -n "$url" ]]; then
+    url="${url%/}"
+    if [[ ! "$url" =~ ^https?:// ]]; then
+      printf '\033[?25l'
+      TUI_LAST_RESULT='Connection unchanged: the URL must be http or https'
+      printf '\n%sThe URL must start with http:// or https://. Nothing was changed.%s\n' "$TUI_DANGER" "$TUI_RESET"
+      tui_wait
+      return 0
+    fi
+  fi
+  printf 'API token (hidden): '
+  IFS= read -rs token || token=''
+  printf '\n'
+  printf '\033[?25l'
+  [[ -z "$url" ]] || MORPHEUS_URL="$url"
+  [[ -z "$token" ]] || MORPHEUS_API_TOKEN="$token"
+  MASTER_TOKEN="$MORPHEUS_API_TOKEN"
+  # A token obtained for the previous appliance means nothing on a new one.
+  TENANT_TOKEN=""
+  TENANT_TOKEN_ID=""
+  TENANT_ADMIN_USER_ID=""
+  if [[ -z "$MORPHEUS_URL" || -z "$MORPHEUS_API_TOKEN" ]]; then
+    TUI_CONNECTION_STATE='Not configured'
+    TUI_IDENTITY=''
+    TUI_BUILD=''
+    TUI_LAST_RESULT='Connection is still incomplete'
+  else
+    printf '\n%sChecking...%s\n' "$TUI_DIM" "$TUI_RESET"
+    tui_probe_connection || true
+    TUI_LAST_RESULT="Connection: ${TUI_CONNECTION_STATE}"
+  fi
+  printf '\n%s\n' "$TUI_CONNECTION_STATE"
+  tui_wait
+  return 0
+}
+
 run_tui() {
   [[ -t 0 && -t 1 ]] || { die "$EXIT_USAGE" 'TUI requires an interactive terminal'; return; }
   local selected=0 key index items
-  local -a TUI_KEYS=(s i p a v d r x c m w q)
+  local -a TUI_KEYS=(n s p i a v d r x c m w q)
   local -a TUI_LABELS=(
-    'Check connection' 'Deployment inventory' 'Preview plan' 'Build selected demo'
+    'Configure connection' 'Check connection'
+    'Preview plan' 'Deployment inventory'
+    'Build selected demo'
     'Verify structure' 'Deep verification' 'Recreate selected demo' 'Destroy selected demo'
-    'Select deployment components' 'Choose manifest source' 'Create custom manifest' 'Quit')
+    'Select deployment components' 'Choose manifest source' 'Create custom manifest'
+    'Quit')
   local -a TUI_GROUPS=(
-    INSPECT INSPECT INSPECT BUILD VALIDATE VALIDATE LIFECYCLE LIFECYCLE
-    CONFIGURE CONFIGURE CONFIGURE SESSION)
+    CONNECTION CONNECTION
+    PLAN PLAN
+    BUILD
+    LIFECYCLE LIFECYCLE LIFECYCLE LIFECYCLE
+    MANIFEST MANIFEST MANIFEST
+    SESSION)
   local -a TUI_HINTS=(
-    'Authenticate and inspect appliance' 'Show recorded resources and IDs' 'Show intended changes' ''
-    'Check resources and ownership' 'Test selected personas and workflow' 'Destroy, then rebuild selection' 'Remove owned demo resources'
-    'Choose platform capabilities' 'Preset or a manifest file' 'Guided JSON manifest wizard' 'Return to shell')
+    'Set the appliance URL and token' 'Authenticate and inspect appliance'
+    'Show intended changes' 'Show recorded resources and IDs'
+    ''
+    'Check resources and ownership' 'Test selected personas and workflow'
+    'Destroy, then rebuild selection' 'Remove owned demo resources'
+    'Choose platform capabilities' 'Preset or a manifest file' 'Guided JSON manifest wizard'
+    'Return to shell')
   items="${#TUI_KEYS[@]}"
   tui_init_palette
   tui_bootstrap_manifest || return
@@ -1998,7 +2058,7 @@ run_tui() {
   tui_render "$selected"
   tui_probe_connection || true
   while true; do
-    TUI_HINTS[3]="Create or resume ${TUI_RESOURCE_COUNT} resources"
+    TUI_HINTS[4]="Create or resume ${TUI_RESOURCE_COUNT} resources"
     tui_render "$selected"
     key="$(tui_read_key)"
     case "$key" in
@@ -2007,52 +2067,55 @@ run_tui() {
       home) selected=0; continue ;;
       end) selected=$((items - 1)); continue ;;
       enter) index="$selected" ;;
-      s) index=0 ;; i) index=1 ;; p) index=2 ;; a) index=3 ;; v) index=4 ;; d) index=5 ;;
-      r) index=6 ;; x) index=7 ;; c) index=8 ;; m) index=9 ;; w) index=10 ;;
-      q | escape) index=11 ;;
+      n) index=0 ;; s) index=1 ;; p) index=2 ;; i) index=3 ;; a) index=4 ;;
+      v) index=5 ;; d) index=6 ;; r) index=7 ;; x) index=8 ;;
+      c) index=9 ;; m) index=10 ;; w) index=11 ;;
+      q | escape) index=12 ;;
       *) continue ;;
     esac
     selected="$index"
     case "$index" in
-      0) tui_run_action 'Connection status' tui_status_action ;;
-      1)
+      0) tui_configure_connection ;;
+      1) tui_run_action 'Connection status' tui_status_action ;;
+      2) tui_run_action 'Plan selected demo' tui_plan_action ;;
+      3)
         if tui_requires_state 'Deployment inventory'; then
           tui_run_action 'Deployment inventory' tui_inventory_action
         fi
         ;;
-      2) tui_run_action 'Plan selected demo' tui_plan_action ;;
-      3) tui_build_screen ;;
-      4)
+      4) tui_build_screen ;;
+      5)
         if tui_requires_state 'Verify demo structure'; then
           tui_run_action 'Verify demo structure' tui_verify_action
         fi
         ;;
-      5)
+      6)
         if tui_requires_state 'Deep verification'; then
           tui_run_action 'Deep verification' tui_deep_verify_action
         fi
         ;;
-      6)
+      7)
         if tui_requires_state 'Recreate selected demo' &&
           tui_confirm 'Recreate selected demo' "$(tui_destroy_phrase)" "All Leroy-owned resources of ${TUI_DEMO_ID} will be deleted, then the current selection will be built."; then
           tui_run_action 'Recreate selected demo' tui_recreate_action
           tui_force_retry 'Recreate selected demo' tui_recreate_force_action
         fi
         ;;
-      7)
+      8)
         if tui_requires_state 'Destroy selected demo' &&
           tui_confirm 'Destroy selected demo' "$(tui_destroy_phrase)" "All Leroy-owned resources of ${TUI_DEMO_ID} will be permanently deleted."; then
           tui_run_action 'Destroy selected demo' tui_destroy_action
           tui_force_retry 'Destroy selected demo' tui_destroy_force_action
         fi
         ;;
-      8) tui_select_components ;;
-      9) tui_select_manifest ;;
-      10) tui_wizard_screen ;;
-      11) tui_leave_screen; return 0 ;;
+      9) tui_select_components ;;
+      10) tui_select_manifest ;;
+      11) tui_wizard_screen ;;
+      12) tui_leave_screen; return 0 ;;
     esac
   done
 }
+
 usage() {
   cat <<'EOF'
 Usage:
