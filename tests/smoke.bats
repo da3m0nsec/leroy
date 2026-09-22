@@ -44,7 +44,8 @@ load test_helper
   bash "$LEROY_BIN" demo preset | jq '.password="not-allowed"' >"$bad_manifest"
   run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$bad_manifest"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"must not contain passwords or tokens"* ]]
+  [[ "$output" == *"credential fields that must never be stored"* ]]
+  [[ "$output" == *"password"* ]]
 }
 
 @test "default plan expands all 24 dependency-ordered resources" {
@@ -70,7 +71,8 @@ load test_helper
     preflight
   ' _ "$LEROY_BIN"
   [ "$status" -eq 9 ]
-  [[ "$output" == *"major version 9 is required"* ]]
+  [[ "$output" == *"Leroy targets Morpheus 9"* ]]
+  [[ "$output" == *"8.0.1"* ]]
 }
 
 @test "ownership check rejects resources without a Leroy identity" {
@@ -178,7 +180,7 @@ load test_helper
   bash "$LEROY_BIN" demo preset | jq '.features.multitenancy=false' >"$bad_manifest"
   run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$bad_manifest"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"manifest is invalid"* ]]
+  [[ "$output" == *"features.roles and features.multitenancy must match"* ]]
 }
 
 @test "component toggles enforce dependent selections" {
@@ -207,7 +209,8 @@ load test_helper
     state_assert_features
   ' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR"
   [ "$status" -eq 8 ]
-  [[ "$output" == *"use recreate"* ]]
+  [[ "$output" == *"recreate the demo to apply the new selection"* ]]
+  [[ "$output" == *"multitenancy: deployed true, now false"* ]]
 }
 
 @test "master-scoped policy payload omits a tenant account" {
@@ -537,7 +540,7 @@ load test_helper
   [ "$status" -eq 0 ]
   run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$v3"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"unsupported schema"* ]]
+  [[ "$output" == *"schemaVersion must be 1 or 2, found 3"* ]]
 }
 
 @test "schema 2 accepts extra personas and expands them" {
@@ -566,7 +569,7 @@ load test_helper
     jq "$filter" "$base" >"$BATS_TEST_TMPDIR/bad.json"
     run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR/bad.json"
     [ "$status" -eq 2 ]
-    [[ "$output" == *"schema version 2"* ]]
+    [[ "$output" == *"problem(s) listed above"* ]]
   done
 }
 
@@ -799,4 +802,75 @@ load test_helper
   [ "$status" -eq 0 ]
   [[ "$output" != *"CREATE WAS CALLED"* ]]
   [[ "$output" == *"role:tenant 55"* ]]
+}
+
+@test "manifest problems are listed one by one with the offending value" {
+  local bad="$BATS_TEST_TMPDIR/bad.json"
+  bash "$LEROY_BIN" demo preset |
+    jq '.metadata.id="BAD ID" | .tenant.subdomain="Bad_Sub" | .personas[1].username=.personas[0].username' >"$bad"
+  run bash -c 'source "$1"; validate_manifest "$2"' _ "$LEROY_BIN" "$bad"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'metadata.id must be 3 to 41 characters'* ]]
+  [[ "$output" == *'found "BAD ID"'* ]]
+  [[ "$output" == *'tenant.subdomain must use only a-z'* ]]
+  [[ "$output" == *'persona usernames must be unique'* ]]
+  [[ "$output" == *"3 problem(s) listed above"* ]]
+}
+
+@test "transport failures name the cause rather than a curl exit code" {
+  run bash -c '
+    source "$1"; MASTER_TOKEN=t; MORPHEUS_URL=https://morpheus.test
+    curl() { return "$RC"; }
+    for RC in 6 7 28 60; do
+      api_request GET /api/whoami 2>&1 >/dev/null | tail -1 || true
+    done
+  ' _ "$LEROY_BIN"
+  [[ "$output" == *"host name could not be resolved"* ]]
+  [[ "$output" == *"connection was refused"* ]]
+  [[ "$output" == *"timed out after"* ]]
+  [[ "$output" == *"MORPHEUS_VERIFY_TLS=false"* ]]
+  [[ "$output" == *"GET /api/whoami"* ]]
+}
+
+@test "HTTP failures name the request, the status and what Morpheus said" {
+  run bash -c '
+    source "$1"; MASTER_TOKEN=t; MORPHEUS_URL=https://morpheus.test
+    curl() { printf "%s\n%s" "{\"msg\":\"Naming pattern is required\"}" "$STATUS"; }
+    for STATUS in 400 401 403 404 500; do
+      api_request POST /api/policies "{}" 2>&1 >/dev/null | tail -1 || true
+    done
+  ' _ "$LEROY_BIN"
+  [[ "$output" == *"refused POST /api/policies as invalid (HTTP 400): Naming pattern is required"* ]]
+  [[ "$output" == *"rejected the token on POST /api/policies (HTTP 401)"* ]]
+  [[ "$output" == *"not allowed to POST /api/policies (HTTP 403)"* ]]
+  [[ "$output" == *"has no POST /api/policies (HTTP 404)"* ]]
+  [[ "$output" == *"appliance failed on POST /api/policies (HTTP 500)"* ]]
+}
+
+@test "a conflict names the resource, the appliance and the marker it lacks" {
+  run bash -c '
+    source "$1"
+    CURRENT_MARKER="Managed by Leroy demo:leroy-demo"; MORPHEUS_URL=https://morpheus.test
+    desired_action() { printf "conflict\n"; }
+    find_remote() { printf "%s\n" "{\"id\":99,\"name\":\"Leroy Development\"}"; }
+    apply_one '"'"'{"key":"group:x","type":"group","scope":"master","name":"Leroy Development","spec":{}}'"'"'
+  ' _ "$LEROY_BIN"
+  [ "$status" -eq 8 ]
+  [[ "$output" == *'a group named "Leroy Development" already exists'* ]]
+  [[ "$output" == *"https://morpheus.test (ID 99)"* ]]
+  [[ "$output" == *"Managed by Leroy demo:leroy-demo"* ]]
+  [[ "$output" == *"destroy the demo that owns it"* ]]
+}
+
+@test "the component drift error names which components changed" {
+  run bash -c '
+    source "$1"
+    LEROY_STATE_DIR="$2/state"; MORPHEUS_URL=https://morpheus.test; APPLIANCE_BUILD=9.0.0
+    manifest_to_temp; state_init
+    TUI_FEATURES_JSON='"'"'{"multitenancy":true,"roles":true,"environments":true,"groups":true,"policies":false,"automation":true,"catalog":true}'"'"'
+    manifest_to_temp; state_assert_features
+  ' _ "$LEROY_BIN" "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 8 ]
+  [[ "$output" == *"policies: deployed true, now false"* ]]
+  [[ "$output" != *"environments:"* ]]
 }

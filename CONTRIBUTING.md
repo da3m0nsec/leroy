@@ -35,6 +35,7 @@ Create a focused branch from the default branch. Prefer short, imperative commit
 - Prefix functions by responsibility, such as `api_request` or `environments_list`.
 - Keep API, command, and presentation functions in clearly labelled sections of `leroy.sh`.
 - Send machine-readable command results to standard output and diagnostics to standard error.
+- An error message names what failed, the value or request that failed, and what the operator can do next. `die "$EXIT_CONFLICT" 'conflict'` tells nobody anything; naming the resource, the appliance and the remedy does.
 - Never log authorization headers, token values, or request bodies known to contain secrets.
 - Avoid parsing JSON with regular expressions; use `jq`.
 

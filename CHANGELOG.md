@@ -28,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Errors say what failed, on what, and what to do about it. Manifest validation lists every broken rule with the offending value instead of one bare "invalid". Transport failures name the cause, such as an unresolved host or a TLS handshake, rather than a curl exit code. HTTP failures name the method, the path, the status and what Morpheus replied. A conflict names the resource, its ID on the appliance and the marker it lacks. Component drift names the components that changed, and a state and appliance mismatch names both URLs. Preflight says which identity the token has, which version the appliance reported, and which endpoint was unreachable.
 - A TUI action that ends in exit code 8 now says which of the three situations it covers instead of only printing the number.
 - TUI actions are grouped by what an operator is doing rather than by internal category: connection, plan, build, lifecycle and manifest, with verification folded into lifecycle.
 - Missing URL and token values are requested interactively instead of immediately failing.
