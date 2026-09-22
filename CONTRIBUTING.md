@@ -43,6 +43,8 @@ Run `make format` before submitting changes. Formatting should use the repositor
 
 ## Testing
 
+Tests must be hermetic. `tests/test_helper.bash` disables the project-local environment file with `LEROY_ENV_FILE=`, so a `.env` in your checkout cannot change a result; a test that exercises that file names it explicitly.
+
 Every behavior change should include or update a Bats test. Tests must not require a live Morpheus appliance. Mock `curl` responses and cover successful requests, error paths, malformed responses, configuration precedence, and safe handling of secrets and destructive-operation confirmation.
 
 The graphical builder in `web/` restates the manifest rules in JavaScript, because a static page cannot run bash. When you change `validate_manifest`, the feature-dependency rules or the resource expansion in `leroy.sh`, change `web/assets/schema.js` with them. `make check` runs every builder scenario through `validate_manifest` and compares both implementations' resource counts, so a divergence fails CI rather than reaching an operator.

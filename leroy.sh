@@ -138,6 +138,53 @@ load_config() {
   MASTER_TOKEN="$MORPHEUS_API_TOKEN"
 }
 
+# Writes KEY=VALUE into an environment file, replacing an existing assignment in
+# place and leaving every other line, comments included, exactly as it was.
+env_file_set() {
+  local file="$1" key="$2" value="$3" tmp directory
+  directory="$(dirname -- "$file")"
+  [[ -d "$directory" ]] || { log_warn "cannot write ${file}: ${directory} does not exist"; return 1; }
+  [[ -e "$file" ]] || { : >"$file" || return 1; chmod 600 "$file" 2>/dev/null || true; }
+  tmp="$(mktemp "${file}.XXXXXX")" || return 1
+  chmod 600 "$tmp" 2>/dev/null || true
+  if ! KEY="$key" VALUE="$value" awk '
+    BEGIN { key = ENVIRON["KEY"]; value = ENVIRON["VALUE"]; replaced = 0 }
+    {
+      probe = $0
+      sub(/^[[:space:]]+/, "", probe)
+      sub(/^export[[:space:]]+/, "", probe)
+      if (probe ~ ("^" key "[[:space:]]*=")) {
+        if (!replaced) { print key "=\"" value "\""; replaced = 1 }
+        next
+      }
+      print
+    }
+    END { if (!replaced) print key "=\"" value "\"" }
+  ' "$file" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$file" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$file" 2>/dev/null || true
+}
+
+# Keeps the connection in the file Leroy reads on start, so it is not retyped
+# every run. The file holds a token, so it is created 0600 and its location is
+# always reported: it is relative to the working directory, not to the script.
+save_connection() {
+  local file="${LEROY_ENV_FILE-.env}" shown
+  [[ -n "$file" ]] || { log_warn 'LEROY_ENV_FILE is empty, so there is no file to save to'; return 1; }
+  if [[ "$MORPHEUS_API_TOKEN" == *'"'* || "$MORPHEUS_API_TOKEN" == *$'\n'* || "$MORPHEUS_URL" == *'"'* ]]; then
+    log_warn 'the URL or token contains a quote or newline, which this file format cannot hold; not saved'
+    return 1
+  fi
+  env_file_set "$file" MORPHEUS_URL "$MORPHEUS_URL" || { log_warn "could not write ${file}; the connection applies to this run only"; return 1; }
+  env_file_set "$file" MORPHEUS_API_TOKEN "$MORPHEUS_API_TOKEN" || { log_warn "could not write ${file}; the connection applies to this run only"; return 1; }
+  shown="$file"
+  [[ "$file" == /* ]] || shown="${PWD}/${file}"
+  log_info "saved the appliance URL and token to ${shown} with mode 600; it holds a credential, so do not commit it"
+}
+
 prompt_runtime_config() {
   if [[ -z "$MORPHEUS_URL" ]]; then
     printf 'Morpheus appliance URL: ' >&2
@@ -154,6 +201,15 @@ prompt_runtime_config() {
   fi
   MORPHEUS_URL="${MORPHEUS_URL%/}"
   MASTER_TOKEN="$MORPHEUS_API_TOKEN"
+  local answer file="${LEROY_ENV_FILE-.env}"
+  [[ -n "$file" ]] || return 0
+  printf 'Save this connection to %s so it is there next time? [Y/n]: ' "$file" >&2
+  IFS= read -r answer || answer='n'
+  if [[ "$answer" =~ ^[Nn] ]]; then
+    log_info "not saved; this connection applies to this run only"
+    return 0
+  fi
+  save_connection || true
 }
 
 prompt_missing_runtime_config() {
@@ -2142,7 +2198,7 @@ tui_configure_connection() {
   printf 'Appliance:  %s\n' "${MORPHEUS_URL:-not set}"
   if [[ -n "$MORPHEUS_API_TOKEN" ]]; then printf 'Token:      set\n'; else printf 'Token:      not set\n'; fi
   printf 'TLS verify: %s\n\n' "$MORPHEUS_VERIFY_TLS"
-  printf '%sThese answers apply to this session only. Put them in a .env next to the\nscript to keep them between runs. Leave an answer empty to keep it as it is.%s\n\n' "$TUI_DIM" "$TUI_RESET"
+  printf '%sLeave an answer empty to keep it as it is. Leroy offers to save the result\nto %s afterwards.%s\n\n' "$TUI_DIM" "${LEROY_ENV_FILE-.env}" "$TUI_RESET"
   printf '\033[?25h'
   printf 'Appliance URL: '
   IFS= read -r url || url=''
@@ -2178,8 +2234,27 @@ tui_configure_connection() {
     TUI_LAST_RESULT="Connection: ${TUI_CONNECTION_STATE}"
   fi
   printf '\n%s\n' "$TUI_CONNECTION_STATE"
+  tui_offer_to_save_connection
   tui_wait
   return 0
+}
+
+tui_offer_to_save_connection() {
+  local answer file="${LEROY_ENV_FILE-.env}"
+  [[ -n "$file" && -n "$MORPHEUS_URL" && -n "$MORPHEUS_API_TOKEN" ]] || return 0
+  printf '\nSave this connection to %s so it is there next time? [Y/n] ' "$file"
+  printf '\033[?25h'
+  IFS= read -r answer || answer='n'
+  printf '\033[?25l'
+  if [[ "$answer" =~ ^[Nn] ]]; then
+    printf '%sNot saved. This connection applies to this session only.%s\n' "$TUI_DIM" "$TUI_RESET"
+    return 0
+  fi
+  if save_connection; then
+    printf '%sSaved to %s.%s\n' "$TUI_SUCCESS" "$file" "$TUI_RESET"
+  else
+    printf '%sCould not save it; the connection applies to this session only.%s\n' "$TUI_WARNING" "$TUI_RESET"
+  fi
 }
 
 run_tui() {

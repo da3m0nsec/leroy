@@ -64,6 +64,8 @@ Configuration values are resolved in this order, from lowest to highest priority
 
 The two configuration files are sourced as shell assignments, so they must be owned and controlled by the operator and must never be sourced from an untrusted location. The project-local `.env` is different: it is found in whatever directory Leroy runs from, so it is parsed rather than sourced. `load_env_file` reads `KEY=VALUE` lines, accepts only Leroy's own settings, tolerates `export` prefixes, quotes and CRLF endings, and never evaluates a value, so a file containing a command substitution yields that text literally instead of running it. Leroy reports which file it loaded, because a stray `.env` can still redirect `MORPHEUS_URL`.
 
+Interactive configuration, both the CLI prompt and the TUI action, offers to write the connection back to that file. `env_file_set` replaces a single assignment in place and preserves every other line, so a file holding other projects' settings is not rewritten around Leroy's two keys. It is created `0600`, and the path is always reported because it is resolved against the working directory.
+
 Access tokens are read from `MORPHEUS_API_TOKEN`. They are deliberately excluded from positional arguments, URLs, debug messages, and process titles. TLS certificate validation defaults to off for demonstration appliances with internal certificates. Set `MORPHEUS_VERIFY_TLS=true` whenever the appliance certificate is trusted.
 
 ## API interaction
