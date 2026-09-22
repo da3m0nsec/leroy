@@ -28,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- A TUI action that ends in exit code 8 now says which of the three situations it covers instead of only printing the number.
 - TUI actions are grouped by what an operator is doing rather than by internal category: connection, plan, build, lifecycle and manifest, with verification folded into lifecycle.
 - Missing URL and token values are requested interactively instead of immediately failing.
 - TLS certificate verification now defaults to disabled.
@@ -42,6 +43,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Choosing a manifest file in the TUI did nothing: the prompt wrote its whole screen to standard output, which the caller captured, so nothing was drawn and the answer arrived wrapped in escape codes. It now answers through a variable, and accepts a leading tilde.
+- A resource Leroy created but that is missing from local state is adopted instead of failing the whole plan with exit code 8. Adoption requires this demo's ownership marker, confirmed against the full object when a list response omits the description, so a resource that merely shares a name still conflicts.
 - Exact Cypher key discovery no longer produces false conflicts from partial search matches.
 - Existing Leroy-owned generated-password keys are adopted during resumable plans and applies.
 - The TUI describes and acts on the manifest it has loaded rather than assuming the built-in preset and the demo ID `leroy-demo`.

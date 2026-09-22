@@ -49,6 +49,7 @@ TUI_LAST_RESULT="No actions run in this session"
 TUI_LAST_RC=0
 TUI_LAST_FORCEABLE=false
 TUI_MANIFEST_TEMP=""
+TUI_PROMPTED_PATH=""
 LAST_WIZARD_FILE=""
 TUI_RESET='' TUI_BOLD='' TUI_DIM='' TUI_ACCENT='' TUI_MUTED=''
 TUI_SUCCESS='' TUI_WARNING='' TUI_DANGER='' TUI_SELECTED=''
@@ -602,6 +603,13 @@ remote_is_owned() {
 # Decides whether a resource that failed the ownership check still looks like
 # Leroy's, which is what --force is allowed to delete. The tostring arm must be
 # parenthesized: piping into it hides every other value from the name check.
+# The ownership marker is what makes adoption safe. A resource Leroy created
+# carries it in its description; a customer resource that merely happens to
+# share a name does not, and still conflicts.
+remote_carries_marker() {
+  jq -e --arg marker "$CURRENT_MARKER" 'tostring | contains($marker)' <<<"$1" >/dev/null 2>&1
+}
+
 remote_has_leroy_identity() {
   local prefix
   prefix="$(jq -r '.metadata.prefix // empty' "$CURRENT_MANIFEST" 2>/dev/null || true)"
@@ -774,10 +782,24 @@ desired_action() {
   fi
   if [[ "$type" == user || "$scope" == tenant ]] && [[ -z "$(resource_id tenant)" ]]; then printf 'create'; return; fi
   found="$(find_remote "$spec")"
-  if [[ -z "$found" ]]; then printf 'create'
-  elif [[ "$type" == cypher ]] && remote_is_owned "$type" "$found" "$(jq -r '.spec.path' <<<"$spec")"; then printf 'adopt'
-  else printf 'conflict'
+  if [[ -z "$found" ]]; then printf 'create'; return; fi
+  if [[ "$type" == cypher ]]; then
+    if remote_is_owned "$type" "$found" "$(jq -r '.spec.path' <<<"$spec")"; then printf 'adopt'; else printf 'conflict'; fi
+    return
   fi
+  # Something with this name exists but state does not know it. When it carries
+  # this demo's marker it is Leroy's own, left behind by a run whose state was
+  # lost, so adopt it rather than refusing to plan the whole demonstration.
+  if remote_carries_marker "$found"; then printf 'adopt'; return; fi
+  local remote_id full
+  remote_id="$(jq -r '.id // empty' <<<"$found")"
+  if [[ -n "$remote_id" ]]; then
+    # A list response may not carry the description, so confirm against the
+    # full object before calling it somebody else's resource.
+    full="$(api_request GET "$(resource_path "$type")/${remote_id}" '' "$(resource_token "$scope")" 2>/dev/null || true)"
+    if [[ -n "$full" ]] && remote_carries_marker "$full"; then printf 'adopt'; return; fi
+  fi
+  printf 'conflict'
 }
 
 emit_plan() {
@@ -826,6 +848,12 @@ apply_one() {
     response="$(api_request GET "/api/cypher/${path}" '' "$MASTER_TOKEN")" || return
     [[ -n "$(jq -r '.data // .cypher.data // empty' <<<"$response")" ]] || return "$EXIT_RESPONSE"
     id="$path"
+  elif [[ "$action" == adopt ]]; then
+    # Already on the appliance and carrying this demo's marker: record the ID
+    # rather than creating a second copy of it.
+    response="$(find_remote "$spec")"
+    id="$(jq -r '.id // empty' <<<"${response:-{\}}")"
+    [[ -n "$id" ]] || { die "$EXIT_RESPONSE" "adopted resource has no ID: $type $name"; return; }
   else
     path="$(resource_path "$type")"; token="$(resource_token "$scope")"; payload="$(build_payload "$spec")" || return
     if [[ "$action" == update ]]; then
@@ -1526,21 +1554,31 @@ tui_render_manifest_sources() {
   printf '%s  Enter select  Esc cancel%s\n' "$TUI_DIM" "$TUI_RESET"
 }
 
+# Answers through TUI_PROMPTED_PATH rather than stdout. Returning it by printing
+# meant the caller captured the whole screen with it, so the prompt was never
+# drawn and the answer arrived wrapped in escape codes.
 tui_prompt_manifest_path() {
   local path
+  TUI_PROMPTED_PATH=""
   tui_action_header 'Manifest file'
-  printf 'Enter a manifest path, or leave it empty to cancel.\n\n> '
+  printf 'Enter a path to a manifest file, or leave it empty to cancel.\n'
+  printf '%sTab completion is not available here, so paste or type the full path.%s\n\n> ' "$TUI_DIM" "$TUI_RESET"
   printf '\033[?25h'
   IFS= read -r path || path=''
   printf '\033[?25l'
+  path="${path#"${path%%[![:space:]]*}"}"
+  path="${path%"${path##*[![:space:]]}"}"
   [[ -n "$path" ]] || return 1
+  # A path typed with a leading tilde is not expanded by read.
+  # shellcheck disable=SC2088
+  [[ "$path" != '~/'* ]] || path="${HOME}/${path:2}"
   if [[ ! -r "$path" ]]; then
     TUI_LAST_RESULT="Manifest is not readable: $path"
-    printf '\n%sManifest file is not readable: %s%s\n' "$TUI_DANGER" "$path" "$TUI_RESET"
+    printf '\n%sNo readable file at: %s%s\n' "$TUI_DANGER" "$path" "$TUI_RESET"
     tui_wait
     return 1
   fi
-  printf '%s\n' "$path"
+  TUI_PROMPTED_PATH="$path"
 }
 
 tui_select_manifest() {
@@ -1584,8 +1622,8 @@ tui_select_manifest() {
           preset) tui_use_preset ;;
           saved) tui_use_saved_demo "${TUI_SOURCE_ORIGINS[$selected]}" || { TUI_SOURCE_NOTICE='That saved deployment could not be read.'; continue; } ;;
           file)
-            path="$(tui_prompt_manifest_path)" || { TUI_SOURCE_NOTICE='No manifest file was selected.'; continue; }
-            tui_use_manifest_file "$path"
+            tui_prompt_manifest_path || { TUI_SOURCE_NOTICE='No manifest file was selected.'; continue; }
+            tui_use_manifest_file "$TUI_PROMPTED_PATH"
             ;;
         esac
         if tui_sync_manifest; then
@@ -1788,6 +1826,13 @@ tui_finish_output() {
   [[ -z "$output" ]] || rm -f "$output"
 }
 
+# Exit 8 covers three unrelated situations and the bare number helps nobody.
+tui_explain_exit() {
+  ((${1:-0} == EXIT_CONFLICT)) || return 0
+  printf '%sExit %s means one of: a resource with that name exists and does not carry\nthis demo'"'"'s ownership marker, the component selection differs from the saved\ndeployment, or that state belongs to a different appliance.%s\n' \
+    "$TUI_WARNING" "$EXIT_CONFLICT" "$TUI_RESET"
+}
+
 tui_run_action() {
   local title="$1" rc=0 output
   shift
@@ -1806,6 +1851,7 @@ tui_run_action() {
     TUI_LAST_RESULT="Failed ($rc): $title"
     [[ -z "$output" ]] || printf '\nAction failed with exit code %s.\n' "$rc" >>"$output"
     printf '\n%sAction failed with exit code %s.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
+    tui_explain_exit "$rc"
   fi
   tui_finish_output "$output" "$title"
   tui_sync_manifest >/dev/null 2>&1 || true
@@ -1855,6 +1901,7 @@ tui_build_screen() {
   if ((rc != 0)); then
     TUI_LAST_RESULT="Failed ($rc): Preview before build"
     printf '\n%sPreview failed with exit code %s. Nothing was changed.%s\n' "$TUI_DANGER" "$rc" "$TUI_RESET"
+    tui_explain_exit "$rc"
     tui_finish_output "$output" 'Preview before build'
     return 0
   fi
